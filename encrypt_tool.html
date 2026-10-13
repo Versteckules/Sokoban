@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Geocaching Tresor-Generator (versteckules)</title>
+  <style>
+    body {
+      background: #0f0e17;
+      color: #fffffe;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 40px 20px;
+      display: flex;
+      justify-content: center;
+    }
+    .card {
+      background: #1c1b29;
+      border: 1px solid rgba(255, 215, 0, 0.2);
+      border-radius: 12px;
+      padding: 30px;
+      max-width: 650px;
+      width: 100%;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    h1 {
+      color: #f59e0b;
+      margin-top: 0;
+      font-size: 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    label {
+      display: block;
+      margin: 15px 0 5px;
+      font-weight: 600;
+      color: #94a3b8;
+    }
+    input, textarea {
+      width: 100%;
+      box-sizing: border-box;
+      background: #0f0e17;
+      border: 1px solid #334155;
+      color: #fff;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 15px;
+    }
+    input:focus, textarea:focus {
+      border-color: #f59e0b;
+      outline: none;
+    }
+    button {
+      background: linear-gradient(135deg, #f59e0b, #d97706);
+      color: #000;
+      border: none;
+      font-weight: bold;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      margin-top: 20px;
+      transition: transform 0.1s, filter 0.2s;
+    }
+    button:hover {
+      filter: brightness(1.15);
+      transform: translateY(-1px);
+    }
+    .output-box {
+      margin-top: 25px;
+      background: #09080e;
+      border: 1px solid #2e2c40;
+      border-radius: 8px;
+      padding: 15px;
+      font-family: monospace;
+      font-size: 13px;
+      color: #10b981;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .success-badge {
+      color: #10b981;
+      margin-top: 10px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h1>🔒 Geocaching Kryptotresor Generator</h1>
+  <p style="color: #94a3b8; line-height: 1.5;">
+    Mit diesem lokalen Werkzeug kannst du deine echten Final-Koordinaten und deinen Spoiler-Hinweis vor dem Hochladen auf GitHub mit <strong>AES-GCM (256-Bit)</strong> verschlüsseln. Der Schlüssel existiert nur im Speicher, wenn alle 15 Level gelöst wurden!
+  </p>
+
+  <label for="coords">Final-Koordinaten:</label>
+  <input type="text" id="coords" value="N 50° 16.782 E 011° 55.430">
+
+  <label for="hint">Final-Hinweis / Spoiler (Optional):</label>
+  <textarea id="hint" rows="3">Das Geheimnis ruht am Fuß der alten Steinstele im Moosversteck.</textarea>
+
+  <label for="creator">Ersteller-Name:</label>
+  <input type="text" id="creator" value="versteckules">
+
+  <button id="btn-encrypt" onclick="encryptVault()">🔐 Tresor jetzt verschlüsseln</button>
+
+  <div id="status" class="success-badge" style="display:none;"></div>
+
+  <label style="margin-top: 20px;">Code für <code>js/crypto.js</code>:</label>
+  <div id="output" class="output-box">// Klicke auf 'Tresor jetzt verschlüsseln'...</div>
+</div>
+
+<script>
+  // Die 15 verifizierten Tokens aller Level (aus js/levels.js)
+  const LEVEL_TOKENS = [
+    "f2d007031983473d", "e791e7ae8b0664b1", "3e6f534e7829e07c", "7b4d22a89865b209", "5f0d251a504e8585",
+    "bf9c6931c8792828", "895d60f7a5d3d093", "2796e36a47e7334e", "4c316265d5304189",
+    "7f5a3ab100ba3429", "70afb2e269ff3dd7", "0692fa038c2f82b7",
+    "7c34afeb5354cc17", "6081d5cbebf04623",
+    "46e9d2d8a5bb5c6b"
+  ];
+
+  window.encryptVault = async function() {
+    const coords = document.getElementById('coords').value.trim();
+    const hint = document.getElementById('hint').value.trim();
+    const creator = document.getElementById('creator').value.trim();
+
+    if (!coords) {
+      alert('Bitte Koordinaten eingeben!');
+      return;
+    }
+
+    const payload = JSON.stringify({
+      coordinates: coords,
+      hint: hint,
+      creator: creator
+    });
+
+    // 1. Sammle alle 15 Tokens
+    const combinedTokens = LEVEL_TOKENS.join('');
+    const encoder = new TextEncoder();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(combinedTokens));
+
+    // 2. Erzeuge AES-GCM Key
+    const key = await crypto.subtle.importKey(
+      'raw',
+      hashBuffer,
+      { name: 'AES-GCM' },
+      false,
+      ['encrypt', 'decrypt']
+    );
+
+    // 3. Erzeuge 12-Byte IV
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertextBuffer = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      encoder.encode(payload)
+    );
+
+    const ivHex = Array.from(iv).map(b => b.toString(16).padStart(2, '0')).join('');
+    const ciphertextHex = Array.from(new Uint8Array(ciphertextBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+    const outputCode = `export const DEFAULT_CIPHER_DATA = {
+  ivHex: "${ivHex}",
+  ciphertextHex: "${ciphertextHex}"
+};`;
+
+    document.getElementById('output').textContent = outputCode;
+    const statusEl = document.getElementById('status');
+    statusEl.style.display = 'block';
+    statusEl.textContent = '✓ Erfolgreich mit AES-GCM (256-Bit) verschlüsselt! Kopiere diesen Block in js/crypto.js.';
+
+    // Test-Entschlüsselung zur 100%igen Verifikation
+    try {
+      const decBuffer = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv },
+        key,
+        ciphertextBuffer
+      );
+      const decText = new TextDecoder().decode(decBuffer);
+      console.log('Test-Entschlüsselung erfolgreich:', decText);
+    } catch (e) {
+      console.error('Fehler bei Test-Entschlüsselung:', e);
+    }
+  };
+</script>
+
+</body>
+</html>
