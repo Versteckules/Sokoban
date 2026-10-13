@@ -18,11 +18,11 @@ Ein audiovisuelles Geocaching-Erlebnis für Smartphone, Tablet und Desktop: 15 m
    - **Tier 5 (Apex-Spitze – 1 Level):** Obsidian / Magma (`#ff3b30`, Glüh-Akzent `#ff8c00`) – Extrem
    - **Freischalt-Logik:** Ein Stein der oberen Reihe öffnet sich erst, wenn **beide Fundamentsteine darunter** bezwungen wurden!
 
-2. **GPS „Play Anywhere“ (Outdoor-Modus):**
-   - Gehe auf einen Sportplatz, Schulhof, Marktplatz oder in einen Stadtpark (Flächenbedarf: ca. 28 × 28 Meter).
-   - Tippe auf **„🎯 Hier verankern“**, um deine aktuelle GPS-Position als Startpunkt festzulegen.
-   - **Ausrichten:** Mit dem Dreh-Button kannst du das Spielfeld entlang der Platzgrenzen drehen.
-   - **Laufen:** Durch reales Gehen steuerst du die Spielfigur und schiebst die Steinblöcke.
+2. **Outdoor-Modus (GPS & Schritt-Erkennung):**
+   - **Blickrichtung & Laufen:** Die Figur läuft genau in die Richtung, in die sie schaut.
+   - **Spielfeld um sich drehen:** Mit dem Button **„🔄 Feld drehen“** drehst du das Spielfeld um dich herum (in 90°-Schritten), um freie Laufwege im Gelände optimal zu nutzen.
+   - **Blickrichtung ändern:** Über die Dreh-Buttons (**„↺ Links“** / **„↻ Rechts“**) oder durch Antippen auf das Spielfeld bestimmst du, wohin der Abenteurer blickt.
+   - **Reale Bewegung:** Durch echtes Gehen im Freien (GPS-Distanz & Schritt-Sensor) steuerst du den Abenteurer vorwärts und schiebst Steinblöcke.
 
 3. **Geocaching Zero-Knowledge Kryptotresor:**
    - Die Finalkoordinaten sind mit **256-Bit AES-GCM** verschlüsselt.

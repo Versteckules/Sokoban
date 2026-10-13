@@ -203,12 +203,6 @@ export class SokobanRenderer {
     this.playerAnim.isMoving = true;
     this.playerAnim.walkProgress = 1; // Schritt-Zyklus starten
 
-    // Figur in Bewegungsrichtung drehen (0° Down, 90° Right, 180° Up, 270° Left)
-    if (moveResult.facing === 'down') this.playerAnim.targetAngle = 0;
-    else if (moveResult.facing === 'right') this.playerAnim.targetAngle = 90;
-    else if (moveResult.facing === 'up') this.playerAnim.targetAngle = 180;
-    else if (moveResult.facing === 'left') this.playerAnim.targetAngle = 270;
-
     if (moveResult.pushedBox) {
       const dx = moveResult.boxTo.x - moveResult.boxFrom.x;
       const dy = moveResult.boxTo.y - moveResult.boxFrom.y;
@@ -346,14 +340,14 @@ export class SokobanRenderer {
       this.ctx.translate(shakeX, shakeY);
     }
 
-    // 3. SPIELFELD-DREHUNG (Visuell um das Spielfeldzentrum drehen!)
-    const centerX = this.offsetX + (this.engine.width * this.tileSize) / 2;
-    const centerY = this.offsetY + (this.engine.height * this.tileSize) / 2;
+    // 3. SPIELFELD-DREHUNG (Visuell um die Spielfigur / den Spieler drehen!)
+    const playerCenterX = this.offsetX + (this.playerAnim.x + 0.5) * this.tileSize;
+    const playerCenterY = this.offsetY + (this.playerAnim.y + 0.5) * this.tileSize;
 
     if (this.rotation !== 0) {
-      this.ctx.translate(centerX, centerY);
+      this.ctx.translate(playerCenterX, playerCenterY);
       this.ctx.rotate(this.rotation * Math.PI / 180);
-      this.ctx.translate(-centerX, -centerY);
+      this.ctx.translate(-playerCenterX, -playerCenterY);
     }
 
     // 4. Echte hochauflösende Bodenplatten mit Fugen & Tiefenlicht
@@ -387,15 +381,7 @@ export class SokobanRenderer {
     this.updateAmbientParticles(dt, tierCfg);
     this.renderAmbientParticles();
 
-    // 14. GPS Radar
-    if (this.gpsOverlay.enabled) {
-      this.renderGpsOverlay(time);
-    }
-
     this.ctx.restore();
-
-    // 15. Realistische Kompass-Rose in Screen-Koordinaten (Orientierungshilfe)
-    this.renderCompassRose();
   }
 
   // Zeichnet den stimmungsvollen Hintergrund der Kammer
@@ -762,9 +748,7 @@ export class SokobanRenderer {
 
   // Dreht die Figur anhand des realen Smartphone-Kompasses
   setPlayerCompassAngle(degrees) {
-    if (this.playerAnim) {
-      this.playerAnim.targetAngle = (degrees % 360 + 360) % 360;
-    }
+    // No-op: Figur wird über 4-Wege-Blickrichtung und Spielfeld-Drehung gesteuert
   }
 
   // Zeichnet den echten animierten Geocacher-Charakter
@@ -785,23 +769,20 @@ export class SokobanRenderer {
     if (isActuallyMoving) {
       p.walkProgress += dt * 0.015;
       bobOffset = Math.sin(p.walkProgress * Math.PI * 2) * (this.tileSize * 0.06);
-      walkAngle = Math.sin(p.walkProgress * Math.PI) * 4; // Grad Wackeln
+      walkAngle = Math.sin(p.walkProgress * Math.PI) * 3; // Grad Wackeln beim Laufen
     }
-
-    // Weiche Drehung zur Zielausrichtung (z. B. 90° bei Rechtsdrehung)
-    let angleDiff = p.targetAngle - p.currentAngle;
-    while (angleDiff < -180) angleDiff += 360;
-    while (angleDiff > 180) angleDiff -= 360;
-    p.currentAngle += angleDiff * 0.22;
 
     const cx = this.offsetX + (p.x + 0.5) * this.tileSize;
     const cy = this.offsetY + (p.y + 0.5) * this.tileSize + bobOffset;
     const s = this.tileSize * 0.95;
 
+    const facing = (this.engine && this.engine.player) ? this.engine.player.facing : (p.facing || 'down');
+
     this.ctx.save();
     this.ctx.translate(cx, cy);
-    // Um den aktuellen Winkel drehen
-    this.ctx.rotate((p.currentAngle + walkAngle) * Math.PI / 180);
+    if (walkAngle !== 0) {
+      this.ctx.rotate(walkAngle * Math.PI / 180);
+    }
     this.ctx.scale(p.squashX, p.squashY);
 
     // Warmes goldenes Heldenlicht am Boden (Aura)
@@ -822,9 +803,9 @@ export class SokobanRenderer {
 
     // Richtungs-Sprite auswählen
     let sprite = this.assets.playerDown;
-    if (p.facing === 'up') sprite = this.assets.playerUp;
-    else if (p.facing === 'left') sprite = this.assets.playerLeft;
-    else if (p.facing === 'right') sprite = this.assets.playerRight;
+    if (facing === 'up') sprite = this.assets.playerUp;
+    else if (facing === 'left') sprite = this.assets.playerLeft;
+    else if (facing === 'right') sprite = this.assets.playerRight;
 
     if (sprite && sprite.isLoaded) {
       // Echter detaillierter Abenteurer mit Ausrüstung & leuchtender Kontur
@@ -844,6 +825,33 @@ export class SokobanRenderer {
       this.ctx.fill();
     }
 
+    // Leuchtender Sicht- & Richtungsanzeiger vor der Figur
+    this.renderFacingIndicator(facing, s);
+
+    this.ctx.restore();
+  }
+
+  // Zeichnet einen edlen goldenen Richtungspfeil vor der Figur
+  renderFacingIndicator(facing, s) {
+    this.ctx.save();
+    let angle = 0;
+    if (facing === 'right') angle = 0;
+    else if (facing === 'down') angle = Math.PI / 2;
+    else if (facing === 'left') angle = Math.PI;
+    else if (facing === 'up') angle = -Math.PI / 2;
+
+    this.ctx.rotate(angle);
+    const dist = s * 0.42;
+    this.ctx.fillStyle = '#fbbf24';
+    this.ctx.shadowColor = '#f59e0b';
+    this.ctx.shadowBlur = 10;
+    this.ctx.beginPath();
+    this.ctx.moveTo(dist + s * 0.22, 0);
+    this.ctx.lineTo(dist, -s * 0.12);
+    this.ctx.lineTo(dist + s * 0.05, 0);
+    this.ctx.lineTo(dist, s * 0.12);
+    this.ctx.closePath();
+    this.ctx.fill();
     this.ctx.restore();
   }
 

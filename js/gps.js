@@ -1,5 +1,5 @@
-// GPS PLAY ANYWHERE ENGINE
-// Outdoor-Standortverfolgung, Verankerung, Ausrichtung und Schritt-Erkennung
+// GPS & MOVEMENT ENGINE (Outdoor Geocaching Edition)
+// Erkennt echte Bewegung im Freien (GPS-Distanz & Schritt-Sensor)
 // Ersteller: versteckules
 
 export class GpsEngine {
@@ -8,262 +8,216 @@ export class GpsEngine {
     this.isTracking = false;
     this.hasPermission = false;
     this.status = 'idle'; // 'idle', 'searching', 'locked', 'denied', 'error'
+    this.accuracy = 999;
     this.lastPosition = null;
-    this.accuracy = 999; // in Metern
 
-    // Anchor-Punkt für die Verankerung auf dem Spielfeld
-    this.anchor = null; // { lat, lon, heading, playerStartX, playerStartY }
-    this.currentTile = { x: 0, y: 0 };
-    this.lastStepTile = { x: 0, y: 0 };
+    // Distanz-Akkumulator für GPS-Laufschritte
+    this.lastGpsCoord = null;
+    this.accumulatedDistance = 0;
+    this.stepThresholdMeters = options.stepThreshold || 2.0; // Ca. 2-3 reale Schritte
 
-    // Konfiguration
-    this.tileSize = options.tileSize || 4.0; // Meter pro Kachel (Default 4.0m)
-    this.rotationAngle = options.rotationAngle || 0; // Grad (0..360)
-    this.thresholdRatio = 0.55; // Hysterese: >55% Kacheltiefe für Schritt
+    // Bewegungssensor (Beschleunigungsmesser / Pedometer)
+    this.motionHandler = null;
+    this.lastMotionPeak = 0;
+    this.motionStepCount = 0;
 
     // Cooldown gegen Doppelschritte
     this.lastStepTime = 0;
-    this.stepCooldownMs = 800;
+    this.stepCooldownMs = 600;
 
     // Callbacks
     this.onLocationUpdate = null;
     this.onStepTriggered = null;
     this.onStatusChange = null;
+
+    // Kompatibilitäts-Eigenschaften
+    this.anchor = { active: true };
+    this.rotationAngle = 0;
+    this.tileSize = 4.0;
   }
 
-  // Startet die kontinuierliche GPS-Standorterfassung
+  // Startet GPS und Bewegungssensor
   startTracking() {
-    if (!('geolocation' in navigator)) {
-      this.setStatus('error', 'Geolocation API wird von diesem Browser nicht unterstützt.');
-      return false;
-    }
-
     if (this.isTracking) return true;
-
-    this.setStatus('searching', 'Satelliten werden gesucht...');
     this.isTracking = true;
 
-    this.watchId = navigator.geolocation.watchPosition(
-      (pos) => this.handlePositionUpdate(pos),
-      (err) => this.handleError(err),
-      {
-        enableHighAccuracy: true,
-        maximumAge: 1000,
-        timeout: 10000
+    this.accumulatedDistance = 0;
+    this.lastGpsCoord = null;
+
+    // 1. Geolocation API starten
+    if ('geolocation' in navigator) {
+      this.setStatus('searching', 'Satelliten werden gesucht...');
+      try {
+        this.watchId = navigator.geolocation.watchPosition(
+          (pos) => this.handlePositionUpdate(pos),
+          (err) => this.handleError(err),
+          {
+            enableHighAccuracy: true,
+            maximumAge: 1000,
+            timeout: 12000
+          }
+        );
+      } catch (e) {
+        this.setStatus('error', 'GPS nicht verfügbar');
       }
-    );
+    } else {
+      this.setStatus('idle', 'Kein GPS auf diesem Gerät');
+    }
+
+    // 2. DeviceMotion Pedometer starten (Smartphone-Schritterkennung beim Gehen)
+    this.initMotionSensor();
 
     return true;
   }
 
-  // Stoppt das Tracking (z. B. beim Verlassen des Spielfelds)
+  // Stoppt das Tracking
   stopTracking() {
     if (this.watchId !== null) {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
     }
+    if (this.motionHandler && window.removeEventListener) {
+      window.removeEventListener('devicemotion', this.motionHandler);
+      this.motionHandler = null;
+    }
     this.isTracking = false;
-    this.setStatus('idle', 'Standorterfassung pausiert.');
+    this.setStatus('idle', 'Standorterfassung pausiert');
   }
 
-  // Verankert das Spielfeld an der aktuellen GPS-Position
-  // playerGridPos: { x, y } (aktuelle Position der Spielfigur im Level)
-  setAnchor(playerGridPos) {
-    if (!this.lastPosition) {
-      return { success: false, message: 'Noch kein GPS-Signal vorhanden. Bitte kurz warten.' };
-    }
+  // Initialisiert den Smartphone-Beschleunigungssensor für Schritt-Erkennung
+  initMotionSensor() {
+    if (typeof window === 'undefined' || !window.DeviceMotionEvent) return;
 
-    const { latitude, longitude } = this.lastPosition.coords;
-    this.anchor = {
-      lat: latitude,
-      lon: longitude,
-      rotation: this.rotationAngle,
-      playerStartX: playerGridPos.x,
-      playerStartY: playerGridPos.y
+    this.motionHandler = (e) => {
+      if (!this.isTracking) return;
+      const acc = e.accelerationIncludingGravity || e.acceleration;
+      if (!acc) return;
+
+      const x = acc.x || 0;
+      const y = acc.y || 0;
+      const z = acc.z || 0;
+      const mag = Math.hypot(x, y, z);
+      const now = performance.now();
+
+      // Schritt-Stoß-Erkennung: Charakteristische Spitzen beim Laufen (~12.6 m/s²)
+      if (mag > 12.6 && (now - this.lastMotionPeak) > 320 && (now - this.lastMotionPeak) < 1800) {
+        this.lastMotionPeak = now;
+        this.motionStepCount++;
+
+        // Bei 2 erkannten Fußtritten (ein voller Geh-Schritt) einen Spielfeld-Schritt auslösen
+        if (this.motionStepCount >= 2) {
+          this.motionStepCount = 0;
+          this.triggerStep('motion');
+        }
+      }
     };
 
-    this.currentTile = { x: playerGridPos.x, y: playerGridPos.y };
-    this.lastStepTile = { x: playerGridPos.x, y: playerGridPos.y };
-
-    this.triggerHaptic(60);
-
-    return {
-      success: true,
-      anchor: this.anchor,
-      message: `Spielfeld erfolgreich verankert! (Genauigkeit: ±${Math.round(this.accuracy)}m)`
-    };
+    window.addEventListener('devicemotion', this.motionHandler, { passive: true });
   }
 
-  // Rotiert das Spielfeld um die Verankerung (z. B. entlang von Sportplatz-Grenzen)
-  setRotation(angleDegrees) {
-    this.rotationAngle = (angleDegrees % 360 + 360) % 360;
-    if (this.anchor) {
-      this.anchor.rotation = this.rotationAngle;
-    }
-  }
-
-  // Ändert die Kachelgröße (3m, 4m, 5m)
-  setTileSize(meters) {
-    this.tileSize = Math.max(2.5, Math.min(6.0, meters));
-  }
-
-  // Verarbeitet eingehende GPS-Koordinaten
+  // Verarbeitet GPS-Positionsänderungen
   handlePositionUpdate(pos) {
     this.lastPosition = pos;
     this.accuracy = pos.coords.accuracy || 999;
     this.hasPermission = true;
 
-    if (this.accuracy <= 15) {
-      this.setStatus('locked', `Signal stabil (±${Math.round(this.accuracy)}m)`);
+    if (this.accuracy <= 25) {
+      this.setStatus('locked', `GPS aktiv (±${Math.round(this.accuracy)}m)`);
     } else {
-      this.setStatus('searching', `Suche besseres Signal (±${Math.round(this.accuracy)}m)`);
+      this.setStatus('searching', `Suche Signal (±${Math.round(this.accuracy)}m)`);
     }
 
-    let relativeMeters = { east: 0, north: 0, dist: 0 };
-    let calculatedTile = { x: 0, y: 0 };
+    const { latitude, longitude } = pos.coords;
 
-    if (this.anchor) {
-      relativeMeters = this.calculateMetersFromAnchor(pos.coords.latitude, pos.coords.longitude);
-      calculatedTile = this.calculateTileCoordinates(relativeMeters.east, relativeMeters.north);
+    if (this.lastGpsCoord) {
+      const dist = this.haversineMeters(this.lastGpsCoord.lat, this.lastGpsCoord.lon, latitude, longitude);
 
-      this.currentTile = calculatedTile;
-      this.checkStepTrigger(calculatedTile);
+      // Filter: Kleine Schwankungen (< 0.7m) im Stillstand ignorieren
+      if (dist >= 0.7 && dist < 35) {
+        this.accumulatedDistance += dist;
+        this.lastGpsCoord = { lat: latitude, lon: longitude };
+
+        // Sobald Schwellenwert (z.B. 2 Meter) erlaufen wurde: Schritt ausführen!
+        if (this.accumulatedDistance >= this.stepThresholdMeters) {
+          this.accumulatedDistance = 0;
+          this.triggerStep('gps');
+        }
+      } else if (dist >= 35) {
+        // Großer Sprung (z.B. Neu-Lock der Satelliten)
+        this.lastGpsCoord = { lat: latitude, lon: longitude };
+      }
+    } else {
+      this.lastGpsCoord = { lat: latitude, lon: longitude };
     }
 
     if (this.onLocationUpdate) {
       this.onLocationUpdate({
         coords: pos.coords,
         accuracy: this.accuracy,
-        relativeMeters,
-        calculatedTile,
-        anchor: this.anchor,
         status: this.status
       });
     }
   }
 
-  // Synchronisiert die interne GPS-Kachel mit der realen Spielerposition (z. B. nach Wandkollision oder Reset)
-  syncPlayerTile(x, y) {
-    this.lastStepTile = { x, y };
-    this.currentTile = { x, y };
-  }
-
-  // Prüft, ob der Geocacher eine Nachbarkachel betreten hat
-  checkStepTrigger(calcTile) {
+  // Löst einen echten Schritt im Spiel aus
+  triggerStep(source = 'walk') {
     const now = performance.now();
     if (now - this.lastStepTime < this.stepCooldownMs) return;
+    this.lastStepTime = now;
 
-    const dx = calcTile.x - this.lastStepTile.x;
-    const dy = calcTile.y - this.lastStepTile.y;
-
-    if (dx === 0 && dy === 0) return;
-
-    // Bestimme primäre Bewegungsachse (fängt auch Diagonallauf und GPS-Sprünge > 1 Kachel ab)
-    let stepDx = 0;
-    let stepDy = 0;
-    let direction = null;
-
-    if (Math.abs(dx) >= Math.abs(dy) && Math.abs(dx) >= 1) {
-      stepDx = dx > 0 ? 1 : -1;
-      direction = stepDx > 0 ? 'right' : 'left';
-    } else if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) >= 1) {
-      stepDy = dy > 0 ? 1 : -1;
-      direction = stepDy > 0 ? 'down' : 'up';
-    }
-
-    if (direction) {
-      this.lastStepTime = now;
-      // Schritt um genau 1 Kachel vorrücken
-      this.lastStepTile.x += stepDx;
-      this.lastStepTile.y += stepDy;
-
-      // Falls GPS durch Latenz oder schnelleres Gehen mehr als 2 Kacheln weit gesprungen ist,
-      // Abstand zur Zielkachel begrenzen, damit die Schritte sauber hintereinander folgen:
-      if (Math.abs(calcTile.x - this.lastStepTile.x) > 2) {
-        this.lastStepTile.x = calcTile.x - stepDx;
-      }
-      if (Math.abs(calcTile.y - this.lastStepTile.y) > 2) {
-        this.lastStepTile.y = calcTile.y - stepDy;
-      }
-
-      this.triggerHaptic(45);
-      if (this.onStepTriggered) {
-        this.onStepTriggered(direction, { ...this.lastStepTile });
-      }
+    this.triggerHaptic(45);
+    if (this.onStepTriggered) {
+      this.onStepTriggered();
     }
   }
 
-  // Projiziert WGS84 Lat/Lon in relative Meter (Ost & Nord) inkl. Himmelsrichtung
-  calculateMetersFromAnchor(lat, lon) {
-    if (!this.anchor) return { east: 0, north: 0, dist: 0, bearing: 0, cardinal: 'N' };
-
-    const avgLat = (this.anchor.lat + lat) / 2 * (Math.PI / 180);
-    const dLat = (lat - this.anchor.lat) * (Math.PI / 180);
-    const dLon = (lon - this.anchor.lon) * (Math.PI / 180);
-
-    const earthRadius = 6378137; // Meter
-    const north = dLat * earthRadius;
-    const east = dLon * earthRadius * Math.cos(avgLat);
-    const dist = Math.sqrt(east * east + north * north);
-
-    // Grad 0..360 (0 = Nord, 90 = Ost, 180 = Süd, 270 = West)
-    const bearing = (Math.atan2(east, north) * 180 / Math.PI + 360) % 360;
-    const cardinal = this.getCardinalDirection(bearing);
-
-    return { east, north, dist, bearing, cardinal };
+  // Haversine-Distanz zwischen zwei GPS-Punkten in Metern
+  haversineMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
   }
 
-  getCardinalDirection(deg) {
-    const val = Math.floor((deg / 22.5) + 0.5) % 16;
-    const arr = ["N", "NNO", "NO", "ONO", "O", "OSO", "SO", "SSO", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
-    return arr[val];
+  // Kompatibilitäts-Stubs
+  setAnchor(playerPos) {
+    this.lastGpsCoord = this.lastPosition ? { lat: this.lastPosition.coords.latitude, lon: this.lastPosition.coords.longitude } : null;
+    this.accumulatedDistance = 0;
+    return { success: true, message: 'Position kalibriert!' };
   }
 
-  // Rotiert die Koordinaten und rechnet Meter in Gitterkacheln um
-  calculateTileCoordinates(eastMeters, northMeters) {
-    const rad = -this.rotationAngle * (Math.PI / 180);
-    const cos = Math.cos(rad);
-    const sin = Math.sin(rad);
-
-    // Rotation anwenden
-    const localX = eastMeters * cos - northMeters * sin;
-    const localY = eastMeters * sin + northMeters * cos;
-
-    // Im Bildschirm-Grid: X nach rechts (+), Y nach unten (+) -> dy = -localY
-    const tileOffsetX = Math.round(localX / this.tileSize);
-    const tileOffsetY = Math.round(-localY / this.tileSize);
-
-    return {
-      x: this.anchor.playerStartX + tileOffsetX,
-      y: this.anchor.playerStartY + tileOffsetY
-    };
+  setRotation(angle) {
+    this.rotationAngle = angle;
   }
 
-  // Haptisches Vibrationsfeedback für Smartphones
+  setTileSize(size) {
+    this.stepThresholdMeters = Math.max(1.5, Math.min(4.0, size * 0.6));
+  }
+
+  syncPlayerTile(x, y) {}
+
   triggerHaptic(duration = 40) {
     if ('vibrate' in navigator) {
-      try {
-        navigator.vibrate(duration);
-      } catch (e) {}
+      try { navigator.vibrate(duration); } catch (e) {}
     }
   }
 
   triggerCollisionHaptic() {
     if ('vibrate' in navigator) {
-      try {
-        navigator.vibrate([60, 40, 80]);
-      } catch (e) {}
+      try { navigator.vibrate([60, 40, 80]); } catch (e) {}
     }
   }
 
   handleError(err) {
-    let msg = 'GPS-Fehler.';
     if (err.code === 1) {
-      this.setStatus('denied', 'GPS-Zugriff verweigert. Bitte Standort in den Browser-Einstellungen erlauben.');
-    } else if (err.code === 2) {
-      this.setStatus('searching', 'Standort nicht verfügbar. Suche Signal...');
+      this.setStatus('denied', 'GPS-Zugriff verweigert');
     } else {
-      this.setStatus('error', 'GPS-Timeout.');
+      this.setStatus('searching', 'Suche GPS-Signal...');
     }
   }
 

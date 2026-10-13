@@ -42,22 +42,16 @@ class SokobanApp {
     this.hudStepCount = document.getElementById('hud-step-count');
     this.hudPushCount = document.getElementById('hud-push-count');
 
-    // GPS & Controls
+    // Controls & Status
     this.gpsPill = document.getElementById('gps-pill');
     this.gpsPillText = document.getElementById('gps-pill-text');
-    this.gpsAccIndicator = document.getElementById('gps-acc-indicator');
     this.rotationVal = document.getElementById('rotation-val');
-    this.selectTileSize = document.getElementById('select-tile-size');
+    this.btnTurnLeft = document.getElementById('btn-turn-left');
+    this.btnStepForward = document.getElementById('btn-step-forward');
+    this.btnTurnRight = document.getElementById('btn-turn-right');
+    this.btnRotateField = document.getElementById('btn-rotate-field');
     this.touchDpadContainer = document.getElementById('touch-dpad-container');
     this.reviewerBanner = document.getElementById('reviewer-badge-banner');
-
-    // Live Nav & Wegweiser HUD
-    this.gpsNavBanner = document.getElementById('gps-nav-banner');
-    this.navTargetHint = document.getElementById('nav-target-hint');
-    this.navWalkText = document.getElementById('nav-walk-text');
-    this.navAdviceText = document.getElementById('nav-advice-text');
-    this.gpsAnchorStatus = document.getElementById('gps-anchor-status');
-    this.gpsDistIndicator = document.getElementById('gps-dist-indicator');
 
     // Modals
     this.modalVictory = document.getElementById('modal-victory');
@@ -175,20 +169,6 @@ class SokobanApp {
       });
     }
 
-    // Reale Smartphone-Kompass-Drehung (deviceorientation)
-    window.addEventListener('deviceorientation', (e) => {
-      if (this.currentScreen !== 'game' || !this.renderer) return;
-      let heading = null;
-      if (e.webkitCompassHeading !== undefined) {
-        heading = e.webkitCompassHeading;
-      } else if (e.alpha !== null && e.alpha !== undefined) {
-        heading = (360 - e.alpha) % 360;
-      }
-      if (heading !== null) {
-        this.renderer.setPlayerCompassAngle(heading);
-      }
-    }, true);
-
     // Navigation zwischen Pyramide & Landing
     document.getElementById('btn-back-to-landing').addEventListener('click', () => {
       this.showScreen('landing');
@@ -205,57 +185,62 @@ class SokobanApp {
     document.getElementById('btn-undo').addEventListener('click', () => this.handleUndo());
     document.getElementById('btn-reset').addEventListener('click', () => this.handleReset());
 
-    // GPS Controls & VISUELLES DREHEN
-    document.getElementById('btn-set-anchor').addEventListener('click', () => {
-      const res = this.gps.setAnchor(this.engine.player);
-      this.updateAnchorUi();
-      this.updateNavBanner();
-      if (res.success) {
-        this.showMessageToast(res.message);
-      } else {
-        alert(res.message);
-      }
-    });
+    // SPIELSTEUERUNG (Buttons unter dem Spielfeld)
+    if (this.btnTurnLeft) {
+      this.btnTurnLeft.addEventListener('click', () => this.turnPlayer(true));
+    }
+    if (this.btnTurnRight) {
+      this.btnTurnRight.addEventListener('click', () => this.turnPlayer(false));
+    }
+    if (this.btnStepForward) {
+      this.btnStepForward.addEventListener('click', () => {
+        if (this.engine && this.engine.player) {
+          this.executeMove(this.engine.player.facing);
+        }
+      });
+    }
+    if (this.btnRotateField) {
+      this.btnRotateField.addEventListener('click', () => this.rotateField());
+    }
 
-    document.getElementById('btn-rotate-field').addEventListener('click', () => {
-      const nextAngle = (this.renderer.rotation + 90) % 360;
-      this.renderer.setRotation(nextAngle);
-      this.renderer.handleResize();
-      this.gps.setRotation(nextAngle);
-      this.rotationVal.textContent = `${nextAngle}°`;
-      this.updateNavBanner();
-      this.showMessageToast(`Spielfeld gedreht auf ${nextAngle}°`);
-    });
+    // Direktes Antippen des Spielfelds (Drehen & Laufen)
+    if (this.canvas) {
+      this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
+    }
 
-    this.selectTileSize.addEventListener('change', (e) => {
-      const size = parseFloat(e.target.value);
-      this.gps.setTileSize(size);
-      this.showMessageToast(`Kachelgröße: ${size}m pro Schritt`);
-    });
-
-    // Tastatursteuerung (Pfeiltasten & WASD nur im Reviewer-Modus! Z=Undo, R=Reset immer)
+    // Tastatursteuerung (Intuitive Steuerung auf Desktop/Laptop)
     window.addEventListener('keydown', (e) => {
-      if (this.currentScreen !== 'game') return;
+      if (this.currentScreen !== 'game' || !this.engine || !this.engine.player) return;
 
       const key = e.key.toLowerCase();
-      const moveKeys = ['arrowup', 'w', 'arrowdown', 's', 'arrowleft', 'a', 'arrowright', 'd'];
-
-      if (moveKeys.includes(key)) {
+      if (key === 'arrowup' || key === 'w') {
         e.preventDefault();
-        if (!this.isReviewerMode) {
-          this.showMessageToast('🚶 GPS-Outdoor-Modus aktiv: Laufe draußen um zu steuern! (Reviewer-Modus: 10x auf Hauptbild tippen)');
-          return;
-        }
-
-        if (key === 'arrowup' || key === 'w') this.executeMove('up', false);
-        else if (key === 'arrowdown' || key === 's') this.executeMove('down', false);
-        else if (key === 'arrowleft' || key === 'a') this.executeMove('left', false);
-        else if (key === 'arrowright' || key === 'd') this.executeMove('right', false);
-        return;
+        this.executeMove(this.engine.player.facing);
+      } else if (key === 'arrowleft' || key === 'a') {
+        e.preventDefault();
+        this.turnPlayer(true);
+      } else if (key === 'arrowright' || key === 'd') {
+        e.preventDefault();
+        this.turnPlayer(false);
+      } else if (key === 'arrowdown' || key === 's') {
+        e.preventDefault();
+        this.turnPlayerAround();
+      } else if (key === ' ' || key === 'spacebar') {
+        e.preventDefault();
+        this.executeMove(this.engine.player.facing);
+      } else if (key === 'q') {
+        e.preventDefault();
+        this.turnPlayer(true);
+      } else if (key === 'e') {
+        e.preventDefault();
+        this.turnPlayer(false);
+      } else if (key === 'z') {
+        e.preventDefault();
+        this.handleUndo();
+      } else if (key === 'r') {
+        e.preventDefault();
+        this.handleReset();
       }
-
-      if (key === 'z') { e.preventDefault(); this.handleUndo(); }
-      else if (key === 'r') { e.preventDefault(); this.handleReset(); }
     });
 
     // Touch D-Pad Buttons
@@ -311,131 +296,100 @@ class SokobanApp {
     });
   }
 
-  // GPS Callbacks einrichten
+  // GPS & Bewegungssensor Callbacks
   setupGpsCallbacks() {
-    this.gps.onLocationUpdate = (data) => {
-      const acc = Math.round(data.accuracy);
-      if (this.gpsAccIndicator) {
-        this.gpsAccIndicator.textContent = `Satellit: ±${acc}m`;
-      }
-      if (this.renderer) {
-        this.renderer.gpsOverlay.accuracy = acc;
-        this.renderer.gpsOverlay.relativeMeters = data.relativeMeters;
-      }
-
-      // Automatische Verankerung: Sobald im Spiel ein stabiles Signal da ist (<= 35m)
-      if (this.currentScreen === 'game' && !this.gps.anchor && data.accuracy <= 35) {
-        const res = this.gps.setAnchor(this.engine.player);
-        if (res.success) {
-          this.updateAnchorUi();
-          this.updateNavBanner();
-          this.showMessageToast(`🎯 Startpunkt automatisch verankert (±${acc}m)!`);
-        }
-      }
-
-      this.updateGpsTelemetryUi(data);
-    };
-
-    this.gps.onStepTriggered = (direction) => {
-      if (this.currentScreen === 'game') {
-        this.executeMove(direction, true); // Echter GPS-Schritt im Freien
+    this.gps.onStepTriggered = () => {
+      if (this.currentScreen === 'game' && this.engine && this.engine.player) {
+        // Echter Schritt im Freien (GPS oder Bewegung): Läuft genau in Blickrichtung!
+        this.executeMove(this.engine.player.facing, true);
       }
     };
 
     this.gps.onStatusChange = (status, msg) => {
-      this.gpsPill.className = `pill pill-gps ${status}`;
-      this.gpsPillText.textContent = status === 'locked' ? 'GPS Signal stark' : (status === 'searching' ? 'GPS sucht...' : 'GPS inaktiv');
+      if (this.gpsPill) {
+        this.gpsPill.className = `pill pill-gps ${status}`;
+      }
+      if (this.gpsPillText) {
+        this.gpsPillText.textContent = status === 'locked' ? 'GPS aktiv' : (status === 'searching' ? 'GPS sucht...' : 'GPS bereit');
+      }
     };
   }
 
-  // Aktualisiert die Anzeige des Verankerungs-Status
-  updateAnchorUi() {
-    if (!this.gpsAnchorStatus) return;
-    if (this.gps.anchor) {
-      this.gpsAnchorStatus.textContent = '⚓ Verankert ✓';
-      this.gpsAnchorStatus.className = 'gps-anchor-badge active';
-      this.gpsAnchorStatus.title = `Startkachel verankert`;
-    } else {
-      this.gpsAnchorStatus.textContent = '⚓ Nicht verankert';
-      this.gpsAnchorStatus.className = 'gps-anchor-badge';
+  // Dreht die Figur nach links oder rechts (90°)
+  turnPlayer(counterClockwise = false) {
+    if (!this.engine || !this.engine.player) return;
+    const dirs = ['up', 'right', 'down', 'left'];
+    const curIdx = dirs.indexOf(this.engine.player.facing);
+    const nextIdx = (curIdx + (counterClockwise ? 3 : 1)) % 4;
+    const newFacing = dirs[nextIdx];
+    this.engine.player.facing = newFacing;
+    if (this.renderer && this.renderer.playerAnim) {
+      this.renderer.playerAnim.facing = newFacing;
     }
+    this.audio.playStep();
   }
 
-  // Live GPS Telemetrie-Werte im HUD aktualisieren
-  updateGpsTelemetryUi(data) {
-    if (this.currentScreen !== 'game') return;
+  // Dreht die Figur um 180° um
+  turnPlayerAround() {
+    if (!this.engine || !this.engine.player) return;
+    const dirs = ['up', 'right', 'down', 'left'];
+    const curIdx = dirs.indexOf(this.engine.player.facing);
+    const nextIdx = (curIdx + 2) % 4;
+    const newFacing = dirs[nextIdx];
+    this.engine.player.facing = newFacing;
+    if (this.renderer && this.renderer.playerAnim) {
+      this.renderer.playerAnim.facing = newFacing;
+    }
+    this.audio.playStep();
+  }
 
-    const rel = data.relativeMeters;
-    if (rel && this.gps.anchor) {
-      const dist = rel.dist.toFixed(1);
-      if (this.gpsDistIndicator) {
-        this.gpsDistIndicator.textContent = `📏 ${dist}m`;
+  // Rotiert das gesamte Spielfeld um die Figur um 90°
+  rotateField() {
+    if (!this.renderer) return;
+    const nextAngle = (this.renderer.rotation + 90) % 360;
+    this.renderer.setRotation(nextAngle);
+    if (this.rotationVal) {
+      this.rotationVal.textContent = `${nextAngle}°`;
+    }
+    this.audio.playStep();
+  }
+
+  // Tippen auf das Spielfeld: Figur drehen oder laufen
+  handleCanvasClick(e) {
+    if (this.currentScreen !== 'game' || !this.engine || !this.renderer) return;
+
+    const rect = this.canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    // Drehung um die Spielfigur berücksichtigen
+    const playerCenterX = this.renderer.offsetX + (this.engine.player.x + 0.5) * this.renderer.tileSize;
+    const playerCenterY = this.renderer.offsetY + (this.engine.player.y + 0.5) * this.renderer.tileSize;
+
+    const dx = clickX - playerCenterX;
+    const dy = clickY - playerCenterY;
+    const rad = -this.renderer.rotation * (Math.PI / 180);
+    const unrotX = dx * Math.cos(rad) - dy * Math.sin(rad);
+    const unrotY = dx * Math.sin(rad) + dy * Math.cos(rad);
+
+    let targetDir = null;
+    if (Math.abs(unrotX) >= Math.abs(unrotY) && Math.abs(unrotX) > this.renderer.tileSize * 0.25) {
+      targetDir = unrotX > 0 ? 'right' : 'left';
+    } else if (Math.abs(unrotY) > Math.abs(unrotX) && Math.abs(unrotY) > this.renderer.tileSize * 0.25) {
+      targetDir = unrotY > 0 ? 'down' : 'up';
+    }
+
+    if (targetDir) {
+      if (this.engine.player.facing !== targetDir) {
+        // Erstes Antippen: Figur in diese Richtung drehen!
+        this.engine.player.facing = targetDir;
+        if (this.renderer.playerAnim) this.renderer.playerAnim.facing = targetDir;
+        this.audio.playStep();
+      } else {
+        // Zweites Antippen (schaut bereits dorthin): Schritt ausführen!
+        this.executeMove(targetDir);
       }
-      if (this.navWalkText) {
-        this.navWalkText.textContent = `📏 Distanz: ${dist}m | 🧭 Laufrichtung: ${rel.cardinal} (${Math.round(rel.bearing)}°)`;
-      }
-
-      this.updateNavGuidance(rel);
     }
-  }
-
-  // Dynamische Richtungsempfehlungen für den Geocacher draußen
-  updateNavGuidance(rel) {
-    if (!this.navAdviceText) return;
-    const targetDir = this.getTargetDirectionHint();
-
-    if (rel.dist < 1.5) {
-      this.navAdviceText.textContent = `💡 Gehe los in Richtung: ${targetDir}`;
-      return;
-    }
-
-    // Wenn der Geocacher sich bewegt, geben wir Hilfestellung
-    const b = rel.bearing;
-    let walkCardinal = 'Norden';
-    if (b >= 45 && b < 135) walkCardinal = 'Osten';
-    else if (b >= 135 && b < 225) walkCardinal = 'Süden';
-    else if (b >= 225 && b < 315) walkCardinal = 'Westen';
-
-    if (targetDir.toLowerCase().includes(walkCardinal.toLowerCase())) {
-      this.navAdviceText.textContent = `✨ Ausgezeichnet! Du läufst genau in Zielrichtung (${walkCardinal}).`;
-    } else {
-      this.navAdviceText.textContent = `💡 Du läufst nach ${walkCardinal}. Nächster Weg liegt im ${targetDir} (oder nutze '🔄 Drehen')!`;
-    }
-  }
-
-  // Berechnet aus Level-Zustand die empfohlene Laufrichtung
-  getTargetDirectionHint() {
-    if (!this.engine || !this.engine.currentLevel) return 'Ziel suchen';
-
-    const p = this.engine.player;
-    let target = null;
-    let minDist = 999;
-    for (const b of this.engine.boxes) {
-      const d = Math.abs(b.x - p.x) + Math.abs(b.y - p.y);
-      if (d < minDist) {
-        minDist = d;
-        target = b;
-      }
-    }
-
-    if (!target) return 'Alle Kisten auf Ziel';
-
-    const dx = target.x - p.x;
-    const dy = target.y - p.y;
-
-    if (Math.abs(dx) >= Math.abs(dy)) {
-      return dx > 0 ? 'OSTEN (Rechts)' : 'WESTEN (Links)';
-    } else {
-      return dy > 0 ? 'SÜDEN (Unten)' : 'NORDEN (Oben)';
-    }
-  }
-
-  // Aktualisiert den Wegweiser-Banner
-  updateNavBanner() {
-    if (!this.navTargetHint) return;
-    const hint = this.getTargetDirectionHint();
-    const rot = this.renderer ? this.renderer.rotation : 0;
-    this.navTargetHint.innerHTML = `👉 Nächster Weg: <strong>${hint}</strong> (Feld: ${rot}°)`;
   }
 
   // Wechselt zwischen den Screens
@@ -487,58 +441,17 @@ class SokobanApp {
     }
 
     this.updateHudStats();
-
-    // GPS zurücksetzen & synchronisieren
-    this.gps.anchor = null;
-    this.gps.syncPlayerTile(this.engine.player.x, this.engine.player.y);
-    this.updateAnchorUi();
     this.showScreen('game');
-    this.updateNavBanner();
-
-    // Falls bereits eine gute GPS-Position da ist, sofort verankern!
-    if (this.gps.lastPosition && this.gps.accuracy <= 30) {
-      this.gps.setAnchor(this.engine.player);
-      this.updateAnchorUi();
-      this.showMessageToast(`🎯 Startpunkt automatisch verankert (±${Math.round(this.gps.accuracy)}m)!`);
-    } else {
-      this.showMessageToast('🛰️ Suche GPS-Signal für automatische Verankerung...');
-    }
-  }
-
-  // Rechnet Bildschirm-Richtung anhand des aktuellen Drehwinkels in Grid-Richtung um
-  mapScreenDirectionToGrid(direction, rotation = 0) {
-    const dirs = ['up', 'right', 'down', 'left'];
-    const d = direction.toLowerCase();
-    let baseIndex = -1;
-    if (d === 'up' || d === 'h' || d === 'hoch') baseIndex = 0;
-    else if (d === 'right' || d === 're' || d === 'rechts') baseIndex = 1;
-    else if (d === 'down' || d === 'r' || d === 'runter') baseIndex = 2;
-    else if (d === 'left' || d === 'l' || d === 'links') baseIndex = 3;
-    if (baseIndex === -1) return direction;
-
-    const rotSteps = (Math.round((rotation % 360) / 90) % 4 + 4) % 4;
-    const mappedIndex = (baseIndex + rotSteps) % 4;
-    return dirs[mappedIndex];
   }
 
   // Führt einen Spielzug aus
-  executeMove(direction, isGps = false) {
-    // Normaler Geocaching-Modus: Tastatur/Touch blockieren, nur GPS darf steuern!
-    if (!isGps && !this.isReviewerMode) {
-      this.showMessageToast('🚶 GPS-Outdoor-Modus aktiv: Laufe draußen um zu steuern! (Reviewer-Modus: 10x auf Hauptbild tippen)');
-      return;
-    }
+  executeMove(direction) {
+    if (!this.engine || !this.engine.currentLevel) return;
 
-    // WICHTIG: BEI ECHTEM GPS hat gps.js den Drehwinkel bereits eingerechnet!
-    // Nur bei manueller Steuerung (D-Pad/Tastatur) müssen wir die Bildschirm-Richtung umrechnen:
-    const mappedDir = isGps ? direction : this.mapScreenDirectionToGrid(direction, this.renderer ? this.renderer.rotation : 0);
-    const res = this.engine.move(mappedDir);
+    const res = this.engine.move(direction);
     this.renderer.onMoveExecuted(res);
 
     if (res.success) {
-      // GPS-Tracking mit erfolgreicher Spielerbewegung synchronisieren
-      this.gps.syncPlayerTile(this.engine.player.x, this.engine.player.y);
-
       if (res.win) {
         this.audio.playWin();
         this.handleWin();
@@ -555,25 +468,9 @@ class SokobanApp {
       // Kollision gegen Wand oder blockierte Kiste
       this.audio.playBump();
       this.gps.triggerCollisionHaptic();
-
-      // GPS-Tracking auf tatsächliche Spielerposition rücksynchronisieren
-      this.gps.syncPlayerTile(this.engine.player.x, this.engine.player.y);
-
-      let dirName = 'diese Richtung';
-      if (mappedDir === 'up') dirName = 'NORDEN (Oben)';
-      else if (mappedDir === 'down') dirName = 'SÜDEN (Unten)';
-      else if (mappedDir === 'left') dirName = 'WESTEN (Links)';
-      else if (mappedDir === 'right') dirName = 'OSTEN (Rechts)';
-
-      if (res.reason === 'wall') {
-        this.showMessageToast(`🛑 Wand im ${dirName} blockiert! Laufe nach Osten oder nutze '🔄 Drehen'.`);
-      } else if (res.reason === 'blocked_box') {
-        this.showMessageToast(`📦 Kiste im ${dirName} kann nicht weiter geschoben werden!`);
-      }
     }
 
     this.updateHudStats();
-    this.updateNavBanner();
   }
 
   handleUndo() {
@@ -581,18 +478,14 @@ class SokobanApp {
     if (res.success) {
       this.audio.playUndo();
       this.renderer.initAnimations();
-      this.gps.syncPlayerTile(this.engine.player.x, this.engine.player.y);
       this.updateHudStats();
-      this.updateNavBanner();
     }
   }
 
   handleReset() {
     this.engine.reset();
     this.renderer.initAnimations();
-    this.gps.syncPlayerTile(this.engine.player.x, this.engine.player.y);
     this.updateHudStats();
-    this.updateNavBanner();
     this.showMessageToast('Level zurückgesetzt');
   }
 
