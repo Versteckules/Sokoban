@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Sokoban: Das Geheimnis der Pyramide | Geocaching Edition</title>
+  <meta name="description" content="15-Level Sokoban Geocaching Outdoor Puzzle von versteckules. Löse die Pyramide per GPS und finde das Final!">
+
+  <!-- Google Fonts: Cinzel für epische Mystik & Inter für saubere Lesbarkeit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@600;800&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="theme-dark">
+
+  <!-- ==================== OBERE GLOBALE LEISTE ==================== -->
+  <header id="global-header">
+    <div class="header-left">
+      <span class="game-glyph">🏛️</span>
+      <span class="game-brand">SOKOBAN PYRAMIDE</span>
+    </div>
+    <div class="header-right">
+      <div id="gps-pill" class="pill pill-gps" title="GPS-Status">
+        <span class="pulse-dot"></span>
+        <span id="gps-pill-text">GPS bereit</span>
+      </div>
+      <button id="btn-audio-toggle" class="btn-icon" aria-label="Audio stummschalten" title="Ton an / aus">
+        <span id="audio-icon">🔊</span>
+      </button>
+      <button id="btn-global-faq" class="btn-icon btn-faq-trigger" aria-label="FAQ & Anleitung" title="Hilfe & Anleitung">
+        <span>❓</span>
+      </button>
+    </div>
+  </header>
+
+  <main id="app-viewport">
+
+    <!-- ==================== SCREEN 1: HERO / LANDING VIEW ==================== -->
+    <section id="landing-screen" class="screen active">
+      <div class="hero-container">
+        <div class="hero-image-wrapper" id="hero-img-wrap" title="Klicke hier">
+          <img src="assets/hero.jpg" alt="Das Geheimnis der Pyramide" class="hero-image" id="hero-img">
+          <div class="hero-overlay-gradient"></div>
+        </div>
+
+        <div class="hero-content">
+          <div class="hero-tag">GEOCACHING MYSTERY EDITION</div>
+          <h1 class="hero-title">DAS GEHEIMNIS DER PYRAMIDE</h1>
+          <p class="hero-subtitle">
+            15 monumentale Prüfungen. Schiebe die uralten Felsblöcke durch reales Vor-Ort-Laufen per GPS und entriegele das versiegelte Koordinaten-Final.
+          </p>
+
+          <div class="creator-signature" id="creator-signature">
+            <span class="creator-sig-text">Made by versteckules</span>
+          </div>
+
+          <div class="hero-actions">
+            <button id="btn-enter-pyramid" class="btn btn-primary btn-glow">
+              <span class="btn-text">PYRAMIDE BETRETEN</span>
+              <span class="btn-icon-right">➔</span>
+            </button>
+            <button id="btn-open-rules" class="btn btn-secondary">
+              <span>📖 Spielregeln & GPS-Guide</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== SCREEN 2: LIVING STONE PYRAMID MAP ==================== -->
+    <section id="pyramid-screen" class="screen">
+      <div class="pyramid-view-container">
+        <div class="pyramid-header">
+          <div class="pyramid-title-wrap">
+            <button id="btn-back-to-landing" class="btn-link">← Startseite</button>
+            <h2 class="section-title">DIE 15 STUFEN DER MACHT</h2>
+            <p class="section-desc">
+              Löse die Fundamentsteine von unten nach oben. Ein Stein öffnet sich erst, wenn <strong>beide Fundamente darunter</strong> bezwungen sind!
+            </p>
+          </div>
+
+          <div class="pyramid-progress-card">
+            <div class="progress-info">
+              <span>GELÖSTE LEVEL:</span>
+              <strong id="progress-count">0 / 15</strong>
+            </div>
+            <div class="progress-bar-bg">
+              <div id="progress-bar-fill" class="progress-bar-fill" style="width: 0%;"></div>
+            </div>
+            <button id="btn-reset-save" class="btn-reset-save" title="Spielfortschritt komplett löschen">
+              ⚠️ Spielstand zurücksetzen
+            </button>
+          </div>
+        </div>
+
+        <!-- DIE 5-STUFIGE PYRAMIDE (OBEN STUFE 5, UNTEN STUFE 1) -->
+        <div class="pyramid-structure" id="pyramid-grid">
+          <!-- Dynamisch gerendert in main.js -->
+        </div>
+
+        <div class="tier-legend">
+          <div class="tier-item"><span class="tier-dot tier-1"></span> Leicht (Smaragd)</div>
+          <div class="tier-item"><span class="tier-dot tier-2"></span> Mittel (Bernstein)</div>
+          <div class="tier-item"><span class="tier-dot tier-3"></span> Hoch (Amethyst)</div>
+          <div class="tier-item"><span class="tier-dot tier-4"></span> Sehr hoch (Rubin)</div>
+          <div class="tier-item"><span class="tier-dot tier-5"></span> Extrem (Obsidian)</div>
+        </div>
+
+        <div class="vault-access-banner" id="vault-access-banner">
+          <div class="vault-banner-content">
+            <span class="vault-icon">🔒</span>
+            <div>
+              <strong>KRYPTOTRESOR (FINAL-KOORDINATEN)</strong>
+              <p id="vault-banner-status">Noch versiegelt. Bezwinge alle 15 Level, um das Siegel zu brechen.</p>
+            </div>
+          </div>
+          <button id="btn-open-vault" class="btn btn-vault" disabled>TRESOR ÖFFNEN</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== SCREEN 3: GAMEPLAY ARENA ==================== -->
+    <section id="game-screen" class="screen">
+      <div class="game-container">
+        <!-- GAME HUD -->
+        <div class="game-hud">
+          <div class="hud-left">
+            <button id="btn-leave-level" class="btn-sm btn-outline">← Pyramide</button>
+            <div class="level-meta">
+              <span id="hud-level-tier" class="tier-badge tier-1">Tier 1</span>
+              <h3 id="hud-level-name">Level 01</h3>
+              <span id="hud-level-ambient" class="hud-ambient-text">🌿 Urwald-Tempel (Holz & Moosstein)</span>
+            </div>
+          </div>
+
+          <div class="hud-stats">
+            <div class="stat-box">
+              <span class="stat-label">SCHRITTE</span>
+              <strong id="hud-step-count">0</strong>
+            </div>
+            <div class="stat-box">
+              <span class="stat-label">SCHÜBE</span>
+              <strong id="hud-push-count">0</strong>
+            </div>
+          </div>
+
+          <div class="hud-actions">
+            <button id="btn-undo" class="btn-sm btn-action" title="Zug rückgängig (Z)">
+              <span>↩ Undo</span>
+            </button>
+            <button id="btn-reset" class="btn-sm btn-action" title="Level zurücksetzen (R)">
+              <span>🔄 Reset</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- LIVE GPS WEGWEISER & RICHTUNGS-LEITFADEN -->
+        <div class="gps-nav-banner" id="gps-nav-banner">
+          <div class="nav-target-col">
+            <span class="nav-target-label">KOMPASS & WEGWEISER:</span>
+            <span class="nav-target-val" id="nav-target-hint">👉 Gehe nach OSTEN (Rechts)</span>
+          </div>
+          <div class="nav-telemetry-col">
+            <span class="nav-walk-info" id="nav-walk-text">📏 Distanz: 0.0m | 🧭 Signal wird gesucht...</span>
+            <span class="nav-advice-info" id="nav-advice-text">💡 Startpunkt wird bei Signal automatisch verankert</span>
+          </div>
+        </div>
+
+        <!-- CANVAS BEREICH -->
+        <div class="canvas-wrapper" id="canvas-wrapper">
+          <canvas id="sokoban-canvas"></canvas>
+        </div>
+
+        <!-- GPS KALIBRIERUNGS- & CONTROL-LEISTE (FÜR OUTDOOR-SPIELER) -->
+        <div class="gps-control-bar" id="gps-control-bar">
+          <div class="gps-telemetry">
+            <span class="gps-anchor-badge" id="gps-anchor-status">⚓ Kalibriert...</span>
+            <span class="gps-accuracy-indicator" id="gps-acc-indicator">Genauigkeit: ±--m</span>
+            <span class="gps-dist-indicator" id="gps-dist-indicator">📏 0.0m</span>
+            <span class="gps-mode-tag" id="gps-mode-tag">GPS: Draußen</span>
+            <button id="btn-gps-help" class="btn-gps-help" title="Was bedeuten Verankern, Drehen etc.?">
+              ❓ Hilfe
+            </button>
+          </div>
+
+          <div class="gps-buttons-row">
+            <button id="btn-set-anchor" class="btn btn-sm btn-gps-anchor" title="Startpunkt an aktueller Position setzen">
+              🎯 Hier verankern
+            </button>
+            <button id="btn-rotate-field" class="btn btn-sm btn-gps-rotate" title="Spielfeld um 90° drehen">
+              🔄 Drehen (<span id="rotation-val">0°</span>)
+            </button>
+            <select id="select-tile-size" class="select-tile-size" title="Schrittweite / Kachelgröße">
+              <option value="3.0">Kompakt (3m)</option>
+              <option value="4.0" selected>Standard (4m)</option>
+              <option value="5.0">Weit (5m)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- VIRTUELLES TOUCH D-PAD (NUR IM REVIEWER- / ENTWICKLER-MODUS) -->
+        <div class="touch-dpad-container" id="touch-dpad-container" style="display: none;">
+          <div class="dpad-wrapper">
+            <button class="dpad-btn dpad-up" id="btn-touch-up">▲</button>
+            <button class="dpad-btn dpad-left" id="btn-touch-left">◀</button>
+            <button class="dpad-btn dpad-center" id="btn-touch-center">●</button>
+            <button class="dpad-btn dpad-right" id="btn-touch-right">▶</button>
+            <button class="dpad-btn dpad-down" id="btn-touch-down">▼</button>
+          </div>
+          <div class="dpad-aux-buttons">
+            <button class="btn-sm btn-action" id="btn-touch-undo">↩ Undo</button>
+            <button class="btn-sm btn-action" id="btn-touch-reset">🔄 Reset</button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ==================== MODAL 1: LEVEL VICTORY ==================== -->
+  <div id="modal-victory" class="modal-backdrop">
+    <div class="modal-box modal-victory-box">
+      <div class="victory-header-glow"></div>
+      <span class="victory-trophy">✨</span>
+      <h3 class="modal-title">STUFE BEZWUNGEN!</h3>
+      <p id="victory-level-name" class="victory-subtitle">Level 01: Smaragd-Pforte</p>
+      
+      <div class="victory-stats-grid">
+        <div class="victory-stat-card">
+          <span>Schritte</span>
+          <strong id="victory-steps">0</strong>
+        </div>
+        <div class="victory-stat-card">
+          <span>Kistenschübe</span>
+          <strong id="victory-pushes">0</strong>
+        </div>
+        <div class="victory-stat-card">
+          <span>Pyramiden-Siegel</span>
+          <strong id="victory-token" class="token-code">Gesichert ✓</strong>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button id="btn-victory-pyramid" class="btn btn-secondary">Zur Pyramide</button>
+        <button id="btn-victory-next" class="btn btn-primary btn-glow">Nächstes Level ➔</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL 2: GEOCACHING KRYPTOTRESOR (FINAL) ==================== -->
+  <div id="modal-vault" class="modal-backdrop">
+    <div class="modal-box modal-vault-box">
+      <div class="vault-sigil-icon">👑</div>
+      <h3 class="modal-title gold-gradient-text">DAS SIEGEL IST GEBROCHEN</h3>
+      <p class="vault-congrats">
+        Du hast alle 15 Prüfungen bestanden! Der 256-Bit Master-Key wurde im Speicher aus allen 15 Fragmenten generiert. Hier sind deine Geocaching-Koordinaten:
+      </p>
+
+      <div class="coordinates-plate">
+        <span class="coord-label">FINAL-KOORDINATEN</span>
+        <div class="coord-value-row">
+          <span id="final-coordinates-text" class="coord-digits">N 50° 16.782 E 011° 55.430</span>
+          <button id="btn-copy-coords" class="btn-copy" title="Koordinaten kopieren">📋 Kopieren</button>
+        </div>
+        <div id="copy-feedback" class="copy-feedback">In Zwischenablage kopiert!</div>
+      </div>
+
+      <div class="hint-plate" id="hint-plate">
+        <span class="hint-label">HINWEIS / SPOILER:</span>
+        <p id="final-hint-text" class="hint-text">Das Geheimnis ruht am Fuß der alten Steinstele im Moosversteck.</p>
+      </div>
+
+      <div class="vault-creator-note">
+        Versteckt mit Leidenschaft von <strong>versteckules</strong>. Happy Caching!
+      </div>
+
+      <div class="modal-actions">
+        <button id="btn-close-vault" class="btn btn-secondary">Schließen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL 3: INTERAKTIVES FAQ & GPS-ANLEITUNG ==================== -->
+  <div id="modal-rules" class="modal-backdrop">
+    <div class="modal-box modal-faq-box">
+      <div class="faq-modal-header">
+        <div class="faq-header-titles">
+          <div class="faq-badge">📖 ANLEITUNG & FAQ</div>
+          <h3 class="modal-title gold-gradient-text">SO FUNKTIONIERT DAS OUTDOOR-SPIEL</h3>
+        </div>
+        <button id="btn-close-rules-x" class="modal-close-x" aria-label="Schließen" title="Schließen">✕</button>
+      </div>
+
+      <div class="faq-content">
+
+        <!-- FAQ 1: Hier verankern -->
+        <div class="faq-card">
+          <div class="faq-card-head">
+            <span class="faq-icon">🎯</span>
+            <strong>Wofür ist „Hier verankern“?</strong>
+          </div>
+          <div class="faq-card-body">
+            Setzt den Startpunkt des Spielfelds dorthin, wo du <strong>im Moment im echten Leben stehst</strong>.
+            <div class="faq-tip">
+              💡 <strong>Praxis-Tipp:</strong> Kommst du beim Laufen an den Rand der Wiese, an einen Zaun oder an einen Busch? Gehe einfach ein paar Meter zurück in die freie Mitte und tippe erneut auf <strong>„Hier verankern“</strong>. Das Spielfeld zentriert sich sofort neu um dich, ohne deinen Zug-Fortschritt zu verlieren!
+            </div>
+          </div>
+        </div>
+
+        <!-- FAQ 2: Drehen -->
+        <div class="faq-card">
+          <div class="faq-card-head">
+            <span class="faq-icon">🔄</span>
+            <strong>Wofür ist „Drehen (0° / 90° / 180° / 270°)“?</strong>
+          </div>
+          <div class="faq-card-body">
+            Richtet das virtuelle Spielfeld optimal an den realen Gegebenheiten deines Geländes aus.
+            <div class="faq-tip">
+              💡 <strong>Praxis-Tipp:</strong> Stehst du an einer Gehwegkante, Hecke oder Sportplatzlinie? Tippe auf <strong>„Drehen“</strong>, bis die Korridore des Levels genau entlang deiner freien Gehrichtung verlaufen.
+            </div>
+          </div>
+        </div>
+
+        <!-- FAQ 3: Kachelgröße -->
+        <div class="faq-card">
+          <div class="faq-card-head">
+            <span class="faq-icon">📏</span>
+            <strong>Welche Kachelgröße soll ich wählen?</strong>
+          </div>
+          <div class="faq-card-body">
+            Die Kachelgröße bestimmt, wie viele Meter du für einen Schritt im echten Leben laufen musst:
+            <ul class="faq-list">
+              <li><strong>Kompakt (3 Meter):</strong> Für kleinere Schulhöfe, Marktplätze oder wenn das Areal begrenzt ist.</li>
+              <li><strong>Standard (4 Meter) 🌟 Empfohlen:</strong> Der ideale Sweet Spot! Fängt Smartphone-GPS-Schwankungen (±2–3m) perfekt ab.</li>
+              <li><strong>Weit (5 Meter):</strong> Für große Sportplätze, Felder oder Parkwiesen – maximale Bewegung an der frischen Luft!</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- FAQ 4: Wie steuern per GPS? -->
+        <div class="faq-card">
+          <div class="faq-card-head">
+            <span class="faq-icon">🚶</span>
+            <strong>Wie steuere ich die Spielfigur?</strong>
+          </div>
+          <div class="faq-card-body">
+            Durch <strong>echtes Vorwärtslaufen im Gelände</strong>! Gehe 2–3 Schritte in die gewünschte Himmelsrichtung. Sobald du mehr als 50% der Distanz in die Nachbarkachel überwunden hast, bewegt sich der Abenteurer und schiebt schwere Kisten. Bleibst du stehen, stoppt die Figur sofort.
+            <div class="faq-alert">
+              🚶 <em>Hinweis:</em> Auf dem Handy sind Pfeiltasten und Touch-Steuerung im normalen Modus gesperrt – es zählt nur echte Bewegung im Freien!
+            </div>
+          </div>
+        </div>
+
+        <!-- FAQ 5: Undo & Reset -->
+        <div class="faq-card">
+          <div class="faq-card-head">
+            <span class="faq-icon">↩</span>
+            <strong>Was tun, wenn eine Kiste in der Ecke feststeckt?</strong>
+          </div>
+          <div class="faq-card-body">
+            Nutze oben rechts im Spiel jederzeit <strong>„↩ Undo“</strong>, um den letzten Schritt/Schub rückgängig zu machen. Mit <strong>„🔄 Reset“</strong> startest du das Level sofort von vorne.
+          </div>
+        </div>
+
+        <!-- FAQ 6: Die 15-Stufen Pyramide -->
+        <div class="faq-card">
+          <div class="faq-card-head">
+            <span class="faq-icon">🔺</span>
+            <strong>Wie funktioniert die Pyramide?</strong>
+          </div>
+          <div class="faq-card-body">
+            Die 15 Prüfungen sind von unten nach oben aufgebaut (5 Leicht → 4 Mittel → 3 Hoch → 2 Sehr hoch → 1 Extrem). Ein oberer Stein schaltet sich erst frei, wenn <strong>beide Fundamente direkt darunter</strong> erfolgreich gelöst wurden!
+          </div>
+        </div>
+
+        <!-- FAQ 7: Das Geocaching Final -->
+        <div class="faq-card">
+          <div class="faq-card-head">
+            <span class="faq-icon">👑</span>
+            <strong>Wann erhalte ich die Final-Koordinaten?</strong>
+          </div>
+          <div class="faq-card-body">
+            Jedes bestandene Level sichert automatisch ein magisches Pyramiden-Siegel im internen Tresor. Sobald alle 15 Prüfungen gelöst sind, bricht das Siegel und der 256-Bit Master-Key entschlüsselt die <strong>Geocaching-Finalkoordinaten</strong> und das Spoiler-Versteck!
+          </div>
+        </div>
+
+      </div>
+
+      <div class="modal-actions faq-modal-footer">
+        <button id="btn-close-rules" class="btn btn-primary btn-glow">Verstanden & Los!</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL 4: REVIEWER-MODUS BANNER ==================== -->
+  <div id="reviewer-badge-banner" class="reviewer-banner" style="display: none;">
+    <span>⚡ REVIEWER-MODUS AKTIV: Tastatur & Touch D-Pad freigeschaltet!</span>
+  </div>
+
+  <!-- JS STANDALONE BUNDLE (Funktioniert sowohl lokal bei Doppelklick als auch auf GitHub Pages) -->
+  <script src="js/game.bundle.js"></script>
+
+<script>
+window.testResults = {};
+window.addEventListener('DOMContentLoaded', () => {
+  try {
+    // 1. Check window.app initialized
+    testResults.appExists = !!window.app;
+    testResults.currentScreen = window.app ? window.app.currentScreen : null;
+    
+    // 2. Click Pyramide betreten
+    const btnEnter = document.getElementById('btn-enter-pyramid');
+    btnEnter.click();
+    testResults.screenAfterEnter = window.app.currentScreen;
+    
+    // 3. Test Hero 10-click (Reviewer mode)
+    window.app.showScreen('landing');
+    const heroImg = document.getElementById('hero-img');
+    for (let i = 0; i < 10; i++) {
+      heroImg.click();
+    }
+    testResults.reviewerActive = window.app.isReviewerMode;
+    
+    // 4. Test Enter Level 1
+    window.app.showScreen('pyramid');
+    window.app.startLevel(0);
+    testResults.levelScreenActive = window.app.currentScreen;
+    testResults.levelId = window.app.engine.currentLevel.id;
+    
+    // 5. Test move right
+    const moveRes = window.app.engine.move('right');
+    testResults.moveRightSuccess = moveRes.success;
+    testResults.moveRightWin = moveRes.win;
+    
+    document.body.setAttribute('data-test-output', JSON.stringify(testResults));
+  } catch(e) {
+    testResults.error = e.message + ' at ' + e.stack;
+    document.body.setAttribute('data-test-output', JSON.stringify(testResults));
+  }
+});
+</script>
+</body>
+</html>

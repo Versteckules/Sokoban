@@ -792,7 +792,15 @@ class SokobanApp {
   }
 }
 
-// App starten sobald DOM geladen ist
-window.addEventListener('DOMContentLoaded', () => {
-  window.app = new SokobanApp();
-});
+// App sicher starten (sowohl wenn DOM noch lädt als auch wenn schon bereit)
+function initApp() {
+  if (!window.app) {
+    window.app = new SokobanApp();
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}

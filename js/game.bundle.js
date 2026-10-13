@@ -1,4 +1,10 @@
-// SOKOBAN PYRAMID - STANDALONE GAME BUNDLE\n// Funktioniert sowohl auf GitHub Pages als auch beim direkten Doppelklick (file://) im Browser!\n// Ersteller: versteckules\n(function() {\n\n// --- Source: levels.js ---\n// SOKOBAN: DAS GEHEIMNIS DER PYRAMIDE
+// SOKOBAN PYRAMID - STANDALONE GAME BUNDLE
+// Funktioniert sowohl auf GitHub Pages als auch beim direkten Doppelklick (file://) im Browser!
+// Ersteller: versteckules
+(function() {
+
+// --- Source: levels.js ---
+// SOKOBAN: DAS GEHEIMNIS DER PYRAMIDE
 // 15 Verifizierte Level-Definitionen (Geocaching Edition)
 // Ersteller: versteckules
 
@@ -242,7 +248,10 @@ const TIER_CONFIG = {
   }
 };
 
-const COMBINED_TOKENS_HASH = "8be5a0437766aa2d6672810c3bfeed2de067bafe5a3e03297b17166644cf7beb";\n\n// --- Source: engine.js ---\n// SOKOBAN CORE ENGINE
+const COMBINED_TOKENS_HASH = "8be5a0437766aa2d6672810c3bfeed2de067bafe5a3e03297b17166644cf7beb";
+
+// --- Source: engine.js ---
+// SOKOBAN CORE ENGINE
 // Verwaltung von Spielzustand, Zügen, Undo-Stack, Pyramiden-Abhängigkeiten und Persistenz
 // Ersteller: versteckules
 
@@ -575,7 +584,10 @@ class SokobanEngine {
   areAllLevelsCompleted() {
     return LEVELS.every((_, idx) => this.progress.completedLevels.includes(idx));
   }
-}\n\n// --- Source: audio.js ---\n// SOKOBAN AUDIO SYSTEM
+}
+
+// --- Source: audio.js ---
+// SOKOBAN AUDIO SYSTEM
 // Web Audio API Synthesizer für Soundeffekte + Hintergrundmusik mit Fallback
 // Ersteller: versteckules
 
@@ -878,7 +890,10 @@ class AudioManager {
       });
     } catch (e) {}
   }
-}\n\n// --- Source: gps.js ---\n// GPS PLAY ANYWHERE ENGINE
+}
+
+// --- Source: gps.js ---
+// GPS PLAY ANYWHERE ENGINE
 // Outdoor-Standortverfolgung, Verankerung, Ausrichtung und Schritt-Erkennung
 // Ersteller: versteckules
 
@@ -1153,7 +1168,10 @@ class GpsEngine {
       this.onStatusChange(status, message);
     }
   }
-}\n\n// --- Source: renderer.js ---\n// SOKOBAN HIGH-END CANVAS RENDERER & PARTICLE SYSTEM
+}
+
+// --- Source: renderer.js ---
+// SOKOBAN HIGH-END CANVAS RENDERER & PARTICLE SYSTEM
 // Echte Texturen (Mauern, Boden, Kisten), animierter Abenteurer-Charakter, Feld-Drehung & Partikel
 // Ersteller: versteckules
 
@@ -2112,7 +2130,10 @@ class SokobanRenderer {
   destroy() {
     window.removeEventListener('resize', this.handleResize);
   }
-}\n\n// --- Source: crypto.js ---\n// ZERO-KNOWLEDGE KRYPTOTRESOR (WEB CRYPTO API)
+}
+
+// --- Source: crypto.js ---
+// ZERO-KNOWLEDGE KRYPTOTRESOR (WEB CRYPTO API)
 // 256-Bit AES-GCM Entschlüsselung der Geocaching Final-Koordinaten
 // Ersteller: versteckules
 
@@ -2220,7 +2241,10 @@ class CryptoVault {
       };
     }
   }
-}\n\n// --- Source: main.js ---\n// SOKOBAN MAIN CONTROLLER & APPLICATION LIFECYCLE
+}
+
+// --- Source: main.js ---
+// SOKOBAN MAIN CONTROLLER & APPLICATION LIFECYCLE
 // Verbindet Engine, Renderer, GPS, Audio, UI & Krypto-Tresor
 // Ersteller: versteckules
 
@@ -3008,7 +3032,17 @@ class SokobanApp {
   }
 }
 
-// App starten sobald DOM geladen ist
-window.addEventListener('DOMContentLoaded', () => {
-  window.app = new SokobanApp();
-});\n\n// App starten sobald DOM geladen ist\nwindow.addEventListener('DOMContentLoaded', () => {\n  window.app = new SokobanApp();\n});\n\n})();
+// App sicher starten (sowohl wenn DOM noch lädt als auch wenn schon bereit)
+function initApp() {
+  if (!window.app) {
+    window.app = new SokobanApp();
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}
+
+})();
