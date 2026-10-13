@@ -893,8 +893,8 @@ class AudioManager {
 }
 
 // --- Source: gps.js ---
-// GPS & MOVEMENT ENGINE (Outdoor Geocaching Edition)
-// Erkennt echte Bewegung im Freien (GPS-Distanz & Schritt-Sensor)
+// GPS OUTDOOR ENGINE (Geocaching Edition)
+// Erkennt echte Fortbewegung im Freien ohne Geister-Schritte
 // Ersteller: versteckules
 
 class GpsEngine {
@@ -906,19 +906,19 @@ class GpsEngine {
     this.accuracy = 999;
     this.lastPosition = null;
 
-    // Distanz-Akkumulator für GPS-Laufschritte
-    this.lastGpsCoord = null;
-    this.accumulatedDistance = 0;
-    this.stepThresholdMeters = options.stepThreshold || 2.0; // Ca. 2-3 reale Schritte
+    // Referenzpunkt für Schritt-Erkennung
+    this.stepOriginCoord = null;
+    this.prevStepCoord = null;
+    // Glättungskoordinaten (Low-Pass Filter)
+    this.filteredLat = null;
+    this.filteredLon = null;
 
-    // Bewegungssensor (Beschleunigungsmesser / Pedometer)
-    this.motionHandler = null;
-    this.lastMotionPeak = 0;
-    this.motionStepCount = 0;
+    // Schritt-Schwelle: Mindestens 3.5m echte Ortsveränderung
+    this.stepThresholdMeters = options.stepThreshold || 3.5;
 
-    // Cooldown gegen Doppelschritte
-    this.lastStepTime = 0;
-    this.stepCooldownMs = 600;
+    // Cooldown gegen Doppelschritte (mindestens 1200ms)
+    this.lastStepTime = -10000;
+    this.stepCooldownMs = 1200;
 
     // Callbacks
     this.onLocationUpdate = null;
@@ -931,15 +931,15 @@ class GpsEngine {
     this.tileSize = 4.0;
   }
 
-  // Startet GPS und Bewegungssensor
+  // Startet kontinuierliche GPS-Standorterfassung
   startTracking() {
     if (this.isTracking) return true;
     this.isTracking = true;
+    this.stepOriginCoord = null;
+    this.prevStepCoord = null;
+    this.filteredLat = null;
+    this.filteredLon = null;
 
-    this.accumulatedDistance = 0;
-    this.lastGpsCoord = null;
-
-    // 1. Geolocation API starten
     if ('geolocation' in navigator) {
       this.setStatus('searching', 'Satelliten werden gesucht...');
       try {
@@ -949,18 +949,15 @@ class GpsEngine {
           {
             enableHighAccuracy: true,
             maximumAge: 1000,
-            timeout: 12000
+            timeout: 10000
           }
         );
       } catch (e) {
         this.setStatus('error', 'GPS nicht verfügbar');
       }
     } else {
-      this.setStatus('idle', 'Kein GPS auf diesem Gerät');
+      this.setStatus('idle', 'Kein GPS');
     }
-
-    // 2. DeviceMotion Pedometer starten (Smartphone-Schritterkennung beim Gehen)
-    this.initMotionSensor();
 
     return true;
   }
@@ -971,102 +968,132 @@ class GpsEngine {
       navigator.geolocation.clearWatch(this.watchId);
       this.watchId = null;
     }
-    if (this.motionHandler && window.removeEventListener) {
-      window.removeEventListener('devicemotion', this.motionHandler);
-      this.motionHandler = null;
-    }
     this.isTracking = false;
-    this.setStatus('idle', 'Standorterfassung pausiert');
+    this.stepOriginCoord = null;
+    this.prevStepCoord = null;
+    this.filteredLat = null;
+    this.filteredLon = null;
+    this.setStatus('idle', 'Pausiert');
   }
 
-  // Initialisiert den Smartphone-Beschleunigungssensor für Schritt-Erkennung
-  initMotionSensor() {
-    if (typeof window === 'undefined' || !window.DeviceMotionEvent) return;
-
-    this.motionHandler = (e) => {
-      if (!this.isTracking) return;
-      const acc = e.accelerationIncludingGravity || e.acceleration;
-      if (!acc) return;
-
-      const x = acc.x || 0;
-      const y = acc.y || 0;
-      const z = acc.z || 0;
-      const mag = Math.hypot(x, y, z);
-      const now = performance.now();
-
-      // Schritt-Stoß-Erkennung: Charakteristische Spitzen beim Laufen (~12.6 m/s²)
-      if (mag > 12.6 && (now - this.lastMotionPeak) > 320 && (now - this.lastMotionPeak) < 1800) {
-        this.lastMotionPeak = now;
-        this.motionStepCount++;
-
-        // Bei 2 erkannten Fußtritten (ein voller Geh-Schritt) einen Spielfeld-Schritt auslösen
-        if (this.motionStepCount >= 2) {
-          this.motionStepCount = 0;
-          this.triggerStep('motion');
-        }
-      }
-    };
-
-    window.addEventListener('devicemotion', this.motionHandler, { passive: true });
-  }
-
-  // Verarbeitet GPS-Positionsänderungen
+  // Verarbeitet GPS-Positionsänderungen mit Jitter-Filter
   handlePositionUpdate(pos) {
     this.lastPosition = pos;
     this.accuracy = pos.coords.accuracy || 999;
     this.hasPermission = true;
 
-    if (this.accuracy <= 25) {
+    if (this.accuracy <= 20) {
       this.setStatus('locked', `GPS aktiv (±${Math.round(this.accuracy)}m)`);
+    } else if (this.accuracy <= 35) {
+      this.setStatus('searching', `GPS ungenau (±${Math.round(this.accuracy)}m)`);
     } else {
       this.setStatus('searching', `Suche Signal (±${Math.round(this.accuracy)}m)`);
     }
 
-    const { latitude, longitude } = pos.coords;
+    const { latitude, longitude, speed } = pos.coords;
 
-    if (this.lastGpsCoord) {
-      const dist = this.haversineMeters(this.lastGpsCoord.lat, this.lastGpsCoord.lon, latitude, longitude);
-
-      // Filter: Kleine Schwankungen (< 0.7m) im Stillstand ignorieren
-      if (dist >= 0.7 && dist < 35) {
-        this.accumulatedDistance += dist;
-        this.lastGpsCoord = { lat: latitude, lon: longitude };
-
-        // Sobald Schwellenwert (z.B. 2 Meter) erlaufen wurde: Schritt ausführen!
-        if (this.accumulatedDistance >= this.stepThresholdMeters) {
-          this.accumulatedDistance = 0;
-          this.triggerStep('gps');
-        }
-      } else if (dist >= 35) {
-        // Großer Sprung (z.B. Neu-Lock der Satelliten)
-        this.lastGpsCoord = { lat: latitude, lon: longitude };
-      }
+    // 1. Tiefpass-Filter (EWMA) dämpft Messrauschen im Stand
+    const filterAlpha = 0.35;
+    if (this.filteredLat === null) {
+      this.filteredLat = latitude;
+      this.filteredLon = longitude;
     } else {
-      this.lastGpsCoord = { lat: latitude, lon: longitude };
+      this.filteredLat = this.filteredLat * (1 - filterAlpha) + latitude * filterAlpha;
+      this.filteredLon = this.filteredLon * (1 - filterAlpha) + longitude * filterAlpha;
+    }
+
+    const currentLat = this.filteredLat;
+    const currentLon = this.filteredLon;
+
+    // 2. Erster Fix: Als Ausgangspunkt setzen
+    if (!this.stepOriginCoord) {
+      this.stepOriginCoord = { lat: currentLat, lon: currentLon };
+      if (this.onLocationUpdate) this.onLocationUpdate(pos);
+      return;
+    }
+
+    // 3. Stationär-Check über GPS-Doppler-Geschwindigkeit
+    // Wenn Smartphone meldet: Geschwindigkeit < 0.35 m/s (~1.2 km/h), steht der Spieler still!
+    const isStationaryBySpeed = (speed !== null && speed !== undefined && !isNaN(speed) && speed < 0.35);
+
+    // 4. Distanz ZUM AUSGANGSPUNKT berechnen
+    const distFromOrigin = this.haversineMeters(
+      this.stepOriginCoord.lat,
+      this.stepOriginCoord.lon,
+      currentLat,
+      currentLon
+    );
+
+    const now = performance.now();
+
+    // Dynamische Schwelle basierend auf GPS-Genauigkeit (mind. 3.5m)
+    const effectiveThreshold = Math.max(this.stepThresholdMeters, this.accuracy * 0.28);
+
+    // Schritt auslösen nur wenn:
+    // a) Echte geglättete Distanz >= 3.5m
+    // b) Nicht stationär laut GPS-Chip
+    // c) Keine irreale Teleportation (> 40m)
+    // d) Akzeptable GPS-Genauigkeit (<= 25m)
+    // e) Cooldown abgelaufen (mind. 1200ms)
+    // f) Kein Rücksprung auf vorherige Position (Bounce-Back Schutz)
+    if (
+      distFromOrigin >= effectiveThreshold &&
+      distFromOrigin < 40 &&
+      this.accuracy <= 25 &&
+      !isStationaryBySpeed
+    ) {
+      // Bounce-Back Check: Wenn die Position nahe am vorherigen Schritt liegt, ist es Jitter
+      let isBounceBack = false;
+      if (this.prevStepCoord) {
+        const distToPrev = this.haversineMeters(
+          this.prevStepCoord.lat,
+          this.prevStepCoord.lon,
+          currentLat,
+          currentLon
+        );
+        if (distToPrev < 2.0) {
+          isBounceBack = true;
+        }
+      }
+
+      if (!isBounceBack && (now - this.lastStepTime >= this.stepCooldownMs)) {
+        this.lastStepTime = now;
+        this.prevStepCoord = { ...this.stepOriginCoord };
+        this.stepOriginCoord = { lat: currentLat, lon: currentLon };
+
+        this.triggerHaptic(45);
+        if (this.onStepTriggered) {
+          this.onStepTriggered();
+        }
+      }
+    } else if (distFromOrigin >= 40) {
+      // Satelliten-Sprung abgefangen: Ausgangspunkt neu kalibrieren ohne Schritt
+      this.stepOriginCoord = { lat: currentLat, lon: currentLon };
     }
 
     if (this.onLocationUpdate) {
-      this.onLocationUpdate({
-        coords: pos.coords,
-        accuracy: this.accuracy,
-        status: this.status
-      });
+      this.onLocationUpdate(pos);
     }
   }
 
-  // Löst einen echten Schritt im Spiel aus
-  triggerStep(source = 'walk') {
-    const now = performance.now();
-    if (now - this.lastStepTime < this.stepCooldownMs) return;
-    this.lastStepTime = now;
-
-    this.triggerHaptic(45);
-    if (this.onStepTriggered) {
-      this.onStepTriggered();
+  // Setzt den Referenzpunkt zurück (z.B. nach manueller Drehung, Schritt oder Level-Start)
+  resetStepOrigin() {
+    if (this.filteredLat !== null) {
+      this.stepOriginCoord = {
+        lat: this.filteredLat,
+        lon: this.filteredLon
+      };
+    } else if (this.lastPosition) {
+      this.stepOriginCoord = {
+        lat: this.lastPosition.coords.latitude,
+        lon: this.lastPosition.coords.longitude
+      };
+    } else {
+      this.stepOriginCoord = null;
     }
   }
 
-  // Haversine-Distanz zwischen zwei GPS-Punkten in Metern
+  // Haversine-Distanz zwischen zwei WGS84-Koordinaten in Metern
   haversineMeters(lat1, lon1, lat2, lon2) {
     const R = 6371000;
     const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -1079,22 +1106,16 @@ class GpsEngine {
     return R * c;
   }
 
-  // Kompatibilitäts-Stubs
-  setAnchor(playerPos) {
-    this.lastGpsCoord = this.lastPosition ? { lat: this.lastPosition.coords.latitude, lon: this.lastPosition.coords.longitude } : null;
-    this.accumulatedDistance = 0;
-    return { success: true, message: 'Position kalibriert!' };
-  }
+  triggerStep() {
+    const now = performance.now();
+    if (now - this.lastStepTime < this.stepCooldownMs) return;
+    this.lastStepTime = now;
 
-  setRotation(angle) {
-    this.rotationAngle = angle;
+    this.triggerHaptic(45);
+    if (this.onStepTriggered) {
+      this.onStepTriggered();
+    }
   }
-
-  setTileSize(size) {
-    this.stepThresholdMeters = Math.max(1.5, Math.min(4.0, size * 0.6));
-  }
-
-  syncPlayerTile(x, y) {}
 
   triggerHaptic(duration = 40) {
     if ('vibrate' in navigator) {
@@ -1110,9 +1131,9 @@ class GpsEngine {
 
   handleError(err) {
     if (err.code === 1) {
-      this.setStatus('denied', 'GPS-Zugriff verweigert');
+      this.setStatus('denied', 'GPS verweigert');
     } else {
-      this.setStatus('searching', 'Suche GPS-Signal...');
+      this.setStatus('searching', 'GPS sucht Signal...');
     }
   }
 
@@ -1122,6 +1143,12 @@ class GpsEngine {
       this.onStatusChange(status, message);
     }
   }
+
+  // Kompatibilitäts-Stubs
+  setAnchor() { this.resetStepOrigin(); return { success: true }; }
+  setRotation() {}
+  setTileSize() {}
+  syncPlayerTile() {}
 }
 
 // --- Source: renderer.js ---
@@ -1873,7 +1900,15 @@ class SokobanRenderer {
 
   // Dreht die Figur anhand des realen Smartphone-Kompasses
   setPlayerCompassAngle(degrees) {
-    // No-op: Figur wird über 4-Wege-Blickrichtung und Spielfeld-Drehung gesteuert
+    if (degrees !== null && degrees !== undefined && !isNaN(degrees)) {
+      this.compassAngle = (degrees % 360 + 360) % 360;
+    } else {
+      this.compassAngle = null;
+    }
+  }
+
+  setCompassHeadingAngle(degrees) {
+    this.setPlayerCompassAngle(degrees);
   }
 
   // Zeichnet den echten animierten Geocacher-Charakter
@@ -1901,10 +1936,27 @@ class SokobanRenderer {
     const cy = this.offsetY + (p.y + 0.5) * this.tileSize + bobOffset;
     const s = this.tileSize * 0.95;
 
-    const facing = (this.engine && this.engine.player) ? this.engine.player.facing : (p.facing || 'down');
+    const gridFacing = (this.engine && this.engine.player) ? this.engine.player.facing : (p.facing || 'down');
+
+    // Blickrichtung auf dem Bildschirm unter Berücksichtigung der Spielfeld-Drehung berechnen
+    const facingToAngle = { up: 0, right: 90, down: 180, left: 270 };
+    const gridAngle = facingToAngle[gridFacing] !== undefined ? facingToAngle[gridFacing] : 180;
+    const screenAngle = (gridAngle + this.rotation) % 360;
+
+    let screenFacing = 'down';
+    if (screenAngle >= 315 || screenAngle < 45) screenFacing = 'up';
+    else if (screenAngle >= 45 && screenAngle < 135) screenFacing = 'right';
+    else if (screenAngle >= 135 && screenAngle < 225) screenFacing = 'down';
+    else if (screenAngle >= 225 && screenAngle < 315) screenFacing = 'left';
 
     this.ctx.save();
     this.ctx.translate(cx, cy);
+
+    // Spielfigur immer zur Kamera / zum Spieler aufrecht ausrichten (kein Umkippen bei Felddrehung)
+    if (this.rotation !== 0) {
+      this.ctx.rotate(-this.rotation * Math.PI / 180);
+    }
+
     if (walkAngle !== 0) {
       this.ctx.rotate(walkAngle * Math.PI / 180);
     }
@@ -1926,11 +1978,11 @@ class SokobanRenderer {
     this.ctx.ellipse(0, s * 0.38, s * 0.35, s * 0.15, 0, 0, Math.PI * 2);
     this.ctx.fill();
 
-    // Richtungs-Sprite auswählen
+    // Richtungs-Sprite passend zur visuellen Bildschirmausrichtung auswählen
     let sprite = this.assets.playerDown;
-    if (facing === 'up') sprite = this.assets.playerUp;
-    else if (facing === 'left') sprite = this.assets.playerLeft;
-    else if (facing === 'right') sprite = this.assets.playerRight;
+    if (screenFacing === 'up') sprite = this.assets.playerUp;
+    else if (screenFacing === 'left') sprite = this.assets.playerLeft;
+    else if (screenFacing === 'right') sprite = this.assets.playerRight;
 
     if (sprite && sprite.isLoaded) {
       // Echter detaillierter Abenteurer mit Ausrüstung & leuchtender Kontur
@@ -1951,19 +2003,19 @@ class SokobanRenderer {
     }
 
     // Leuchtender Sicht- & Richtungsanzeiger vor der Figur
-    this.renderFacingIndicator(facing, s);
+    this.renderFacingIndicator(screenFacing, s);
 
     this.ctx.restore();
   }
 
   // Zeichnet einen edlen goldenen Richtungspfeil vor der Figur
-  renderFacingIndicator(facing, s) {
+  renderFacingIndicator(screenFacing, s) {
     this.ctx.save();
     let angle = 0;
-    if (facing === 'right') angle = 0;
-    else if (facing === 'down') angle = Math.PI / 2;
-    else if (facing === 'left') angle = Math.PI;
-    else if (facing === 'up') angle = -Math.PI / 2;
+    if (screenFacing === 'right') angle = 0;
+    else if (screenFacing === 'down') angle = Math.PI / 2;
+    else if (screenFacing === 'left') angle = Math.PI;
+    else if (screenFacing === 'up') angle = -Math.PI / 2;
 
     this.ctx.rotate(angle);
     const dist = s * 0.42;
@@ -2223,6 +2275,8 @@ class SokobanApp {
     this.isReviewerMode = false;
     this.creatorTapCount = 0;
     this.creatorTapTimer = null;
+    this.lastManualTurnTime = 0;
+    this.lastCompassHeading = null;
 
     // DOM-Referenzen
     this.screens = {
@@ -2496,14 +2550,74 @@ class SokobanApp {
         setTimeout(() => fb.style.display = 'none', 2500);
       });
     });
+
+    // Reale Smartphone-Kompass-Erkennung (Drehung im Freien)
+    const handleOrientation = (e) => {
+      if (this.currentScreen !== 'game' || !this.engine || !this.engine.player) return;
+
+      // Wenn der Spieler vor weniger als 2.2 Sekunden manuell gedreht hat: Kompass pausieren
+      const now = performance.now();
+      if (now - this.lastManualTurnTime < 2200) return;
+
+      let heading = null;
+      if (e.webkitCompassHeading !== undefined && e.webkitCompassHeading !== null) {
+        heading = e.webkitCompassHeading;
+      } else if (e.alpha !== null && e.alpha !== undefined) {
+        heading = (360 - e.alpha) % 360;
+      }
+
+      if (heading === null || isNaN(heading)) return;
+
+      // Zitter-Filter: Micro-Bewegungen unter 2.5 Grad dämpfen
+      if (this.lastCompassHeading !== null && Math.abs(heading - this.lastCompassHeading) < 2.5) {
+        return;
+      }
+      this.lastCompassHeading = heading;
+
+      // Felddrehung berücksichtigen
+      const fieldRot = this.renderer ? this.renderer.rotation : 0;
+      const gridAngle = (heading - fieldRot + 360) % 360;
+
+      const newFacing = this.angleToDirection(gridAngle, this.engine.player.facing);
+      if (newFacing !== this.engine.player.facing) {
+        this.engine.player.facing = newFacing;
+        if (this.renderer && this.renderer.playerAnim) {
+          this.renderer.playerAnim.facing = newFacing;
+        }
+      }
+
+      if (this.renderer) {
+        this.renderer.setCompassHeadingAngle(gridAngle);
+      }
+    };
+
+    window.addEventListener('deviceorientation', handleOrientation, true);
+    window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+
+    // iOS Safari Kompass-Berechtigung auf Nutzer-Geste
+    const requestCompassPermission = () => {
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission().then(res => {
+          if (res === 'granted') {
+            window.addEventListener('deviceorientation', handleOrientation, true);
+          }
+        }).catch(() => {});
+      }
+    };
+
+    const enterBtn = document.getElementById('btn-enter-pyramid');
+    if (enterBtn) enterBtn.addEventListener('click', requestCompassPermission, { once: true });
+    if (this.canvas) {
+      this.canvas.addEventListener('touchstart', requestCompassPermission, { once: true });
+    }
   }
 
   // GPS & Bewegungssensor Callbacks
   setupGpsCallbacks() {
     this.gps.onStepTriggered = () => {
       if (this.currentScreen === 'game' && this.engine && this.engine.player) {
-        // Echter Schritt im Freien (GPS oder Bewegung): Läuft genau in Blickrichtung!
-        this.executeMove(this.engine.player.facing, true);
+        // Echter Schritt im Freien per GPS: Läuft genau in Blickrichtung!
+        this.executeMove(this.engine.player.facing);
       }
     };
 
@@ -2517,6 +2631,39 @@ class SokobanApp {
     };
   }
 
+  // Mappt einen kontinuierlichen Kompass-Winkel auf 4 Quadranten mit Hysterese-Puffer gegen Flackern
+  angleToDirection(angle, currentFacing) {
+    const h = 8; // 8 Grad Hysterese gegen Flackern an den Quadranten-Grenzen
+    if (currentFacing === 'up') {
+      if (angle >= 45 + h && angle < 135 - h) return 'right';
+      if (angle >= 135 - h && angle < 225 + h) return 'down';
+      if (angle >= 225 + h && angle < 315 - h) return 'left';
+      return 'up';
+    }
+    if (currentFacing === 'right') {
+      if (angle >= 135 + h && angle < 225 - h) return 'down';
+      if (angle >= 225 - h && angle < 315 + h) return 'left';
+      if (angle >= 315 + h || angle < 45 - h) return 'up';
+      return 'right';
+    }
+    if (currentFacing === 'down') {
+      if (angle >= 225 + h && angle < 315 - h) return 'left';
+      if (angle >= 315 - h || angle < 45 + h) return 'up';
+      if (angle >= 45 + h && angle < 135 - h) return 'right';
+      return 'down';
+    }
+    if (currentFacing === 'left') {
+      if (angle >= 315 + h || angle < 45 - h) return 'up';
+      if (angle >= 45 - h && angle < 135 + h) return 'right';
+      if (angle >= 135 + h && angle < 225 - h) return 'down';
+      return 'left';
+    }
+    if (angle >= 45 && angle < 135) return 'right';
+    if (angle >= 135 && angle < 225) return 'down';
+    if (angle >= 225 && angle < 315) return 'left';
+    return 'up';
+  }
+
   // Dreht die Figur nach links oder rechts (90°)
   turnPlayer(counterClockwise = false) {
     if (!this.engine || !this.engine.player) return;
@@ -2528,6 +2675,7 @@ class SokobanApp {
     if (this.renderer && this.renderer.playerAnim) {
       this.renderer.playerAnim.facing = newFacing;
     }
+    this.lastManualTurnTime = performance.now();
     this.audio.playStep();
   }
 
@@ -2542,6 +2690,7 @@ class SokobanApp {
     if (this.renderer && this.renderer.playerAnim) {
       this.renderer.playerAnim.facing = newFacing;
     }
+    this.lastManualTurnTime = performance.now();
     this.audio.playStep();
   }
 
@@ -2553,6 +2702,16 @@ class SokobanApp {
     if (this.rotationVal) {
       this.rotationVal.textContent = `${nextAngle}°`;
     }
+
+    // Wenn der Kompass aktiv ist: Ausrichtung an das gedrehte Feld anpassen
+    if (this.lastCompassHeading !== null && this.engine && this.engine.player) {
+      const gridAngle = (this.lastCompassHeading - nextAngle + 360) % 360;
+      const newFacing = this.angleToDirection(gridAngle, this.engine.player.facing);
+      this.engine.player.facing = newFacing;
+      if (this.renderer.playerAnim) this.renderer.playerAnim.facing = newFacing;
+      this.renderer.setCompassHeadingAngle(gridAngle);
+    }
+
     this.audio.playStep();
   }
 
@@ -2652,6 +2811,7 @@ class SokobanApp {
 
     const res = this.engine.move(direction);
     this.renderer.onMoveExecuted(res);
+    this.gps.resetStepOrigin(); // Referenzpunkt für nächsten Schritt synchronisieren
 
     if (res.success) {
       if (res.win) {

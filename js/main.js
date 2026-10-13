@@ -21,6 +21,8 @@ class SokobanApp {
     this.isReviewerMode = false;
     this.creatorTapCount = 0;
     this.creatorTapTimer = null;
+    this.lastManualTurnTime = 0;
+    this.lastCompassHeading = null;
 
     // DOM-Referenzen
     this.screens = {
@@ -294,14 +296,74 @@ class SokobanApp {
         setTimeout(() => fb.style.display = 'none', 2500);
       });
     });
+
+    // Reale Smartphone-Kompass-Erkennung (Drehung im Freien)
+    const handleOrientation = (e) => {
+      if (this.currentScreen !== 'game' || !this.engine || !this.engine.player) return;
+
+      // Wenn der Spieler vor weniger als 2.2 Sekunden manuell gedreht hat: Kompass pausieren
+      const now = performance.now();
+      if (now - this.lastManualTurnTime < 2200) return;
+
+      let heading = null;
+      if (e.webkitCompassHeading !== undefined && e.webkitCompassHeading !== null) {
+        heading = e.webkitCompassHeading;
+      } else if (e.alpha !== null && e.alpha !== undefined) {
+        heading = (360 - e.alpha) % 360;
+      }
+
+      if (heading === null || isNaN(heading)) return;
+
+      // Zitter-Filter: Micro-Bewegungen unter 2.5 Grad dämpfen
+      if (this.lastCompassHeading !== null && Math.abs(heading - this.lastCompassHeading) < 2.5) {
+        return;
+      }
+      this.lastCompassHeading = heading;
+
+      // Felddrehung berücksichtigen
+      const fieldRot = this.renderer ? this.renderer.rotation : 0;
+      const gridAngle = (heading - fieldRot + 360) % 360;
+
+      const newFacing = this.angleToDirection(gridAngle, this.engine.player.facing);
+      if (newFacing !== this.engine.player.facing) {
+        this.engine.player.facing = newFacing;
+        if (this.renderer && this.renderer.playerAnim) {
+          this.renderer.playerAnim.facing = newFacing;
+        }
+      }
+
+      if (this.renderer) {
+        this.renderer.setCompassHeadingAngle(gridAngle);
+      }
+    };
+
+    window.addEventListener('deviceorientation', handleOrientation, true);
+    window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+
+    // iOS Safari Kompass-Berechtigung auf Nutzer-Geste
+    const requestCompassPermission = () => {
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission().then(res => {
+          if (res === 'granted') {
+            window.addEventListener('deviceorientation', handleOrientation, true);
+          }
+        }).catch(() => {});
+      }
+    };
+
+    const enterBtn = document.getElementById('btn-enter-pyramid');
+    if (enterBtn) enterBtn.addEventListener('click', requestCompassPermission, { once: true });
+    if (this.canvas) {
+      this.canvas.addEventListener('touchstart', requestCompassPermission, { once: true });
+    }
   }
 
   // GPS & Bewegungssensor Callbacks
   setupGpsCallbacks() {
     this.gps.onStepTriggered = () => {
       if (this.currentScreen === 'game' && this.engine && this.engine.player) {
-        // Echter Schritt im Freien (GPS oder Bewegung): Läuft genau in Blickrichtung!
-        this.executeMove(this.engine.player.facing, true);
+        // Echter Schritt im Freien per GPS: Läuft genau in Blickrichtung!
+        this.executeMove(this.engine.player.facing);
       }
     };
 
@@ -315,6 +377,39 @@ class SokobanApp {
     };
   }
 
+  // Mappt einen kontinuierlichen Kompass-Winkel auf 4 Quadranten mit Hysterese-Puffer gegen Flackern
+  angleToDirection(angle, currentFacing) {
+    const h = 8; // 8 Grad Hysterese gegen Flackern an den Quadranten-Grenzen
+    if (currentFacing === 'up') {
+      if (angle >= 45 + h && angle < 135 - h) return 'right';
+      if (angle >= 135 - h && angle < 225 + h) return 'down';
+      if (angle >= 225 + h && angle < 315 - h) return 'left';
+      return 'up';
+    }
+    if (currentFacing === 'right') {
+      if (angle >= 135 + h && angle < 225 - h) return 'down';
+      if (angle >= 225 - h && angle < 315 + h) return 'left';
+      if (angle >= 315 + h || angle < 45 - h) return 'up';
+      return 'right';
+    }
+    if (currentFacing === 'down') {
+      if (angle >= 225 + h && angle < 315 - h) return 'left';
+      if (angle >= 315 - h || angle < 45 + h) return 'up';
+      if (angle >= 45 + h && angle < 135 - h) return 'right';
+      return 'down';
+    }
+    if (currentFacing === 'left') {
+      if (angle >= 315 + h || angle < 45 - h) return 'up';
+      if (angle >= 45 - h && angle < 135 + h) return 'right';
+      if (angle >= 135 + h && angle < 225 - h) return 'down';
+      return 'left';
+    }
+    if (angle >= 45 && angle < 135) return 'right';
+    if (angle >= 135 && angle < 225) return 'down';
+    if (angle >= 225 && angle < 315) return 'left';
+    return 'up';
+  }
+
   // Dreht die Figur nach links oder rechts (90°)
   turnPlayer(counterClockwise = false) {
     if (!this.engine || !this.engine.player) return;
@@ -326,6 +421,7 @@ class SokobanApp {
     if (this.renderer && this.renderer.playerAnim) {
       this.renderer.playerAnim.facing = newFacing;
     }
+    this.lastManualTurnTime = performance.now();
     this.audio.playStep();
   }
 
@@ -340,6 +436,7 @@ class SokobanApp {
     if (this.renderer && this.renderer.playerAnim) {
       this.renderer.playerAnim.facing = newFacing;
     }
+    this.lastManualTurnTime = performance.now();
     this.audio.playStep();
   }
 
@@ -351,6 +448,16 @@ class SokobanApp {
     if (this.rotationVal) {
       this.rotationVal.textContent = `${nextAngle}°`;
     }
+
+    // Wenn der Kompass aktiv ist: Ausrichtung an das gedrehte Feld anpassen
+    if (this.lastCompassHeading !== null && this.engine && this.engine.player) {
+      const gridAngle = (this.lastCompassHeading - nextAngle + 360) % 360;
+      const newFacing = this.angleToDirection(gridAngle, this.engine.player.facing);
+      this.engine.player.facing = newFacing;
+      if (this.renderer.playerAnim) this.renderer.playerAnim.facing = newFacing;
+      this.renderer.setCompassHeadingAngle(gridAngle);
+    }
+
     this.audio.playStep();
   }
 
@@ -450,6 +557,7 @@ class SokobanApp {
 
     const res = this.engine.move(direction);
     this.renderer.onMoveExecuted(res);
+    this.gps.resetStepOrigin(); // Referenzpunkt für nächsten Schritt synchronisieren
 
     if (res.success) {
       if (res.win) {

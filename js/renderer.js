@@ -748,7 +748,15 @@ export class SokobanRenderer {
 
   // Dreht die Figur anhand des realen Smartphone-Kompasses
   setPlayerCompassAngle(degrees) {
-    // No-op: Figur wird über 4-Wege-Blickrichtung und Spielfeld-Drehung gesteuert
+    if (degrees !== null && degrees !== undefined && !isNaN(degrees)) {
+      this.compassAngle = (degrees % 360 + 360) % 360;
+    } else {
+      this.compassAngle = null;
+    }
+  }
+
+  setCompassHeadingAngle(degrees) {
+    this.setPlayerCompassAngle(degrees);
   }
 
   // Zeichnet den echten animierten Geocacher-Charakter
@@ -776,10 +784,27 @@ export class SokobanRenderer {
     const cy = this.offsetY + (p.y + 0.5) * this.tileSize + bobOffset;
     const s = this.tileSize * 0.95;
 
-    const facing = (this.engine && this.engine.player) ? this.engine.player.facing : (p.facing || 'down');
+    const gridFacing = (this.engine && this.engine.player) ? this.engine.player.facing : (p.facing || 'down');
+
+    // Blickrichtung auf dem Bildschirm unter Berücksichtigung der Spielfeld-Drehung berechnen
+    const facingToAngle = { up: 0, right: 90, down: 180, left: 270 };
+    const gridAngle = facingToAngle[gridFacing] !== undefined ? facingToAngle[gridFacing] : 180;
+    const screenAngle = (gridAngle + this.rotation) % 360;
+
+    let screenFacing = 'down';
+    if (screenAngle >= 315 || screenAngle < 45) screenFacing = 'up';
+    else if (screenAngle >= 45 && screenAngle < 135) screenFacing = 'right';
+    else if (screenAngle >= 135 && screenAngle < 225) screenFacing = 'down';
+    else if (screenAngle >= 225 && screenAngle < 315) screenFacing = 'left';
 
     this.ctx.save();
     this.ctx.translate(cx, cy);
+
+    // Spielfigur immer zur Kamera / zum Spieler aufrecht ausrichten (kein Umkippen bei Felddrehung)
+    if (this.rotation !== 0) {
+      this.ctx.rotate(-this.rotation * Math.PI / 180);
+    }
+
     if (walkAngle !== 0) {
       this.ctx.rotate(walkAngle * Math.PI / 180);
     }
@@ -801,11 +826,11 @@ export class SokobanRenderer {
     this.ctx.ellipse(0, s * 0.38, s * 0.35, s * 0.15, 0, 0, Math.PI * 2);
     this.ctx.fill();
 
-    // Richtungs-Sprite auswählen
+    // Richtungs-Sprite passend zur visuellen Bildschirmausrichtung auswählen
     let sprite = this.assets.playerDown;
-    if (facing === 'up') sprite = this.assets.playerUp;
-    else if (facing === 'left') sprite = this.assets.playerLeft;
-    else if (facing === 'right') sprite = this.assets.playerRight;
+    if (screenFacing === 'up') sprite = this.assets.playerUp;
+    else if (screenFacing === 'left') sprite = this.assets.playerLeft;
+    else if (screenFacing === 'right') sprite = this.assets.playerRight;
 
     if (sprite && sprite.isLoaded) {
       // Echter detaillierter Abenteurer mit Ausrüstung & leuchtender Kontur
@@ -826,19 +851,19 @@ export class SokobanRenderer {
     }
 
     // Leuchtender Sicht- & Richtungsanzeiger vor der Figur
-    this.renderFacingIndicator(facing, s);
+    this.renderFacingIndicator(screenFacing, s);
 
     this.ctx.restore();
   }
 
   // Zeichnet einen edlen goldenen Richtungspfeil vor der Figur
-  renderFacingIndicator(facing, s) {
+  renderFacingIndicator(screenFacing, s) {
     this.ctx.save();
     let angle = 0;
-    if (facing === 'right') angle = 0;
-    else if (facing === 'down') angle = Math.PI / 2;
-    else if (facing === 'left') angle = Math.PI;
-    else if (facing === 'up') angle = -Math.PI / 2;
+    if (screenFacing === 'right') angle = 0;
+    else if (screenFacing === 'down') angle = Math.PI / 2;
+    else if (screenFacing === 'left') angle = Math.PI;
+    else if (screenFacing === 'up') angle = -Math.PI / 2;
 
     this.ctx.rotate(angle);
     const dist = s * 0.42;
