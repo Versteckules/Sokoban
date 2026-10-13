@@ -1,10 +1,4 @@
-// SOKOBAN PYRAMID - STANDALONE GAME BUNDLE
-// Funktioniert sowohl auf GitHub Pages als auch beim direkten Doppelklick (file://) im Browser!
-// Ersteller: versteckules
-(function() {
-
-// --- Source: levels.js ---
-// SOKOBAN: DAS GEHEIMNIS DER PYRAMIDE
+// SOKOBAN PYRAMID - STANDALONE GAME BUNDLE\n// Funktioniert sowohl auf GitHub Pages als auch beim direkten Doppelklick (file://) im Browser!\n// Ersteller: versteckules\n(function() {\n\n// --- Source: levels.js ---\n// SOKOBAN: DAS GEHEIMNIS DER PYRAMIDE
 // 15 Verifizierte Level-Definitionen (Geocaching Edition)
 // Ersteller: versteckules
 
@@ -248,14 +242,9 @@ const TIER_CONFIG = {
   }
 };
 
-const COMBINED_TOKENS_HASH = "8be5a0437766aa2d6672810c3bfeed2de067bafe5a3e03297b17166644cf7beb";
-
-
-// --- Source: engine.js ---
-// SOKOBAN CORE ENGINE
+const COMBINED_TOKENS_HASH = "8be5a0437766aa2d6672810c3bfeed2de067bafe5a3e03297b17166644cf7beb";\n\n// --- Source: engine.js ---\n// SOKOBAN CORE ENGINE
 // Verwaltung von Spielzustand, Zügen, Undo-Stack, Pyramiden-Abhängigkeiten und Persistenz
 // Ersteller: versteckules
-
 
 
 const CELL = {
@@ -586,11 +575,7 @@ class SokobanEngine {
   areAllLevelsCompleted() {
     return LEVELS.every((_, idx) => this.progress.completedLevels.includes(idx));
   }
-}
-
-
-// --- Source: audio.js ---
-// SOKOBAN AUDIO SYSTEM
+}\n\n// --- Source: audio.js ---\n// SOKOBAN AUDIO SYSTEM
 // Web Audio API Synthesizer für Soundeffekte + Hintergrundmusik mit Fallback
 // Ersteller: versteckules
 
@@ -893,11 +878,7 @@ class AudioManager {
       });
     } catch (e) {}
   }
-}
-
-
-// --- Source: gps.js ---
-// GPS PLAY ANYWHERE ENGINE
+}\n\n// --- Source: gps.js ---\n// GPS PLAY ANYWHERE ENGINE
 // Outdoor-Standortverfolgung, Verankerung, Ausrichtung und Schritt-Erkennung
 // Ersteller: versteckules
 
@@ -1041,6 +1022,12 @@ class GpsEngine {
     }
   }
 
+  // Synchronisiert die interne GPS-Kachel mit der realen Spielerposition (z. B. nach Wandkollision oder Reset)
+  syncPlayerTile(x, y) {
+    this.lastStepTile = { x, y };
+    this.currentTile = { x, y };
+  }
+
   // Prüft, ob der Geocacher eine Nachbarkachel betreten hat
   checkStepTrigger(calcTile) {
     const now = performance.now();
@@ -1049,29 +1036,46 @@ class GpsEngine {
     const dx = calcTile.x - this.lastStepTile.x;
     const dy = calcTile.y - this.lastStepTile.y;
 
-    // Nur genau einen orthogonalen Schritt (nicht diagonal) zulassen
-    if (Math.abs(dx) + Math.abs(dy) === 1) {
-      let direction = null;
-      if (dx === 1) direction = 'right';
-      else if (dx === -1) direction = 'left';
-      else if (dy === 1) direction = 'down';
-      else if (dy === -1) direction = 'up';
+    if (dx === 0 && dy === 0) return;
 
-      if (direction && this.onStepTriggered) {
-        this.lastStepTime = now;
-        this.lastStepTile = { x: calcTile.x, y: calcTile.y };
-        this.triggerHaptic(40);
-        this.onStepTriggered(direction, calcTile);
+    // Bestimme primäre Bewegungsachse (fängt auch Diagonallauf und GPS-Sprünge > 1 Kachel ab)
+    let stepDx = 0;
+    let stepDy = 0;
+    let direction = null;
+
+    if (Math.abs(dx) >= Math.abs(dy) && Math.abs(dx) >= 1) {
+      stepDx = dx > 0 ? 1 : -1;
+      direction = stepDx > 0 ? 'right' : 'left';
+    } else if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) >= 1) {
+      stepDy = dy > 0 ? 1 : -1;
+      direction = stepDy > 0 ? 'down' : 'up';
+    }
+
+    if (direction) {
+      this.lastStepTime = now;
+      // Schritt um genau 1 Kachel vorrücken
+      this.lastStepTile.x += stepDx;
+      this.lastStepTile.y += stepDy;
+
+      // Falls GPS durch Latenz oder schnelleres Gehen mehr als 2 Kacheln weit gesprungen ist,
+      // Abstand zur Zielkachel begrenzen, damit die Schritte sauber hintereinander folgen:
+      if (Math.abs(calcTile.x - this.lastStepTile.x) > 2) {
+        this.lastStepTile.x = calcTile.x - stepDx;
       }
-    } else if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-      // Größerer Sprung (GPS-Jitter) -> schrittweise anpassen ohne wilden Kistenschub
-      this.lastStepTile = { x: calcTile.x, y: calcTile.y };
+      if (Math.abs(calcTile.y - this.lastStepTile.y) > 2) {
+        this.lastStepTile.y = calcTile.y - stepDy;
+      }
+
+      this.triggerHaptic(45);
+      if (this.onStepTriggered) {
+        this.onStepTriggered(direction, { ...this.lastStepTile });
+      }
     }
   }
 
-  // Projiziert WGS84 Lat/Lon in relative Meter (Ost & Nord)
+  // Projiziert WGS84 Lat/Lon in relative Meter (Ost & Nord) inkl. Himmelsrichtung
   calculateMetersFromAnchor(lat, lon) {
-    if (!this.anchor) return { east: 0, north: 0, dist: 0 };
+    if (!this.anchor) return { east: 0, north: 0, dist: 0, bearing: 0, cardinal: 'N' };
 
     const avgLat = (this.anchor.lat + lat) / 2 * (Math.PI / 180);
     const dLat = (lat - this.anchor.lat) * (Math.PI / 180);
@@ -1082,7 +1086,17 @@ class GpsEngine {
     const east = dLon * earthRadius * Math.cos(avgLat);
     const dist = Math.sqrt(east * east + north * north);
 
-    return { east, north, dist };
+    // Grad 0..360 (0 = Nord, 90 = Ost, 180 = Süd, 270 = West)
+    const bearing = (Math.atan2(east, north) * 180 / Math.PI + 360) % 360;
+    const cardinal = this.getCardinalDirection(bearing);
+
+    return { east, north, dist, bearing, cardinal };
+  }
+
+  getCardinalDirection(deg) {
+    const val = Math.floor((deg / 22.5) + 0.5) % 16;
+    const arr = ["N", "NNO", "NO", "ONO", "O", "OSO", "SO", "SSO", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+    return arr[val];
   }
 
   // Rotiert die Koordinaten und rechnet Meter in Gitterkacheln um
@@ -1139,15 +1153,9 @@ class GpsEngine {
       this.onStatusChange(status, message);
     }
   }
-}
-
-
-// --- Source: renderer.js ---
-// SOKOBAN HIGH-END CANVAS RENDERER & PARTICLE SYSTEM
+}\n\n// --- Source: renderer.js ---\n// SOKOBAN HIGH-END CANVAS RENDERER & PARTICLE SYSTEM
 // Echte Texturen (Mauern, Boden, Kisten), animierter Abenteurer-Charakter, Feld-Drehung & Partikel
 // Ersteller: versteckules
-
-
 
 
 class SokobanRenderer {
@@ -1240,7 +1248,7 @@ class SokobanRenderer {
 
     // GPS Radar Overlay
     this.gpsOverlay = {
-      enabled: false,
+      enabled: true,
       accuracy: 0,
       relativeMeters: null
     };
@@ -1538,6 +1546,9 @@ class SokobanRenderer {
     }
 
     this.ctx.restore();
+
+    // 15. Realistische Kompass-Rose in Screen-Koordinaten (Orientierungshilfe)
+    this.renderCompassRose();
   }
 
   // Zeichnet den stimmungsvollen Hintergrund der Kammer
@@ -2016,33 +2027,94 @@ class SokobanRenderer {
     }
   }
 
-  // GPS Radar
+  // GPS Radar & Genauigkeits-Aura
   renderGpsOverlay(time) {
     const cx = this.offsetX + (this.playerAnim.x + 0.5) * this.tileSize;
     const cy = this.offsetY + (this.playerAnim.y + 0.5) * this.tileSize;
-    const radarR = (this.tileSize * (this.gpsOverlay.accuracy || 4)) / 4;
+    const radarR = (this.tileSize * Math.min(10, Math.max(2, this.gpsOverlay.accuracy || 4))) / 4;
 
     this.ctx.save();
-    this.ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+    const pulse = Math.sin(time * 0.003) * 0.15 + 0.85;
+
+    // Pulsierender Radar-Kreis
+    this.ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
     this.ctx.lineWidth = 1.5;
     this.ctx.setLineDash([4, 4]);
     this.ctx.beginPath();
-    this.ctx.arc(cx, cy, Math.min(radarR, this.tileSize * 2.5), 0, Math.PI * 2);
+    this.ctx.arc(cx, cy, Math.min(radarR * pulse, this.tileSize * 3.5), 0, Math.PI * 2);
     this.ctx.stroke();
+
+    // Sanfte Radar-Aura
+    const radGrad = this.ctx.createRadialGradient(cx, cy, 2, cx, cy, Math.min(radarR * pulse, this.tileSize * 3.5));
+    radGrad.addColorStop(0, 'rgba(56, 189, 248, 0.08)');
+    radGrad.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+    this.ctx.fillStyle = radGrad;
+    this.ctx.beginPath();
+    this.ctx.arc(cx, cy, Math.min(radarR * pulse, this.tileSize * 3.5), 0, Math.PI * 2);
+    this.ctx.fill();
+
     this.ctx.restore();
+  }
+
+  // Zeichnet eine edle antike Kompass-Rose in der oberen rechten Ecke des Spielfelds
+  renderCompassRose() {
+    const ctx = this.ctx;
+    const width = this.canvas.width / this.dpr;
+    const r = 22;
+    const cx = width - r - 14;
+    const cy = r + 14;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+
+    // Hintergrund & Bronze-Rahmen
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Nord-Richtung unter Berücksichtigung der Spielfeld-Drehung
+    // Bei rotation = 0 zeigt Norden nach oben (-90° in Standard-Canvas-Winkeln)
+    const northRad = (-this.rotation) * Math.PI / 180;
+    ctx.rotate(northRad);
+
+    // Nord-Nadel (Leuchtend Rot)
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath();
+    ctx.moveTo(0, -r + 4);
+    ctx.lineTo(4, -1);
+    ctx.lineTo(-4, -1);
+    ctx.closePath();
+    ctx.fill();
+
+    // Süd-Nadel (Silber-Grau)
+    ctx.fillStyle = '#94a3b8';
+    ctx.beginPath();
+    ctx.moveTo(0, r - 4);
+    ctx.lineTo(4, 1);
+    ctx.lineTo(-4, 1);
+    ctx.closePath();
+    ctx.fill();
+
+    // N-Buchstabe
+    ctx.fillStyle = '#fca5a5';
+    ctx.font = 'bold 9px var(--font-mono, monospace)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('N', 0, -r + 4);
+
+    ctx.restore();
   }
 
   destroy() {
     window.removeEventListener('resize', this.handleResize);
   }
-}
-
-
-// --- Source: crypto.js ---
-// ZERO-KNOWLEDGE KRYPTOTRESOR (WEB CRYPTO API)
+}\n\n// --- Source: crypto.js ---\n// ZERO-KNOWLEDGE KRYPTOTRESOR (WEB CRYPTO API)
 // 256-Bit AES-GCM Entschlüsselung der Geocaching Final-Koordinaten
 // Ersteller: versteckules
-
 
 
 // Standard Test-Tresor (Wird mit dem Master-Key aller 15 Level entschlüsselt)
@@ -2148,19 +2220,9 @@ class CryptoVault {
       };
     }
   }
-}
-
-
-// --- Source: main.js ---
-// SOKOBAN MAIN CONTROLLER & APPLICATION LIFECYCLE
+}\n\n// --- Source: main.js ---\n// SOKOBAN MAIN CONTROLLER & APPLICATION LIFECYCLE
 // Verbindet Engine, Renderer, GPS, Audio, UI & Krypto-Tresor
 // Ersteller: versteckules
-
-
-
-
-
-
 
 
 class SokobanApp {
@@ -2204,6 +2266,14 @@ class SokobanApp {
     this.selectTileSize = document.getElementById('select-tile-size');
     this.touchDpadContainer = document.getElementById('touch-dpad-container');
     this.reviewerBanner = document.getElementById('reviewer-badge-banner');
+
+    // Live Nav & Wegweiser HUD
+    this.gpsNavBanner = document.getElementById('gps-nav-banner');
+    this.navTargetHint = document.getElementById('nav-target-hint');
+    this.navWalkText = document.getElementById('nav-walk-text');
+    this.navAdviceText = document.getElementById('nav-advice-text');
+    this.gpsAnchorStatus = document.getElementById('gps-anchor-status');
+    this.gpsDistIndicator = document.getElementById('gps-dist-indicator');
 
     // Modals
     this.modalVictory = document.getElementById('modal-victory');
@@ -2354,6 +2424,8 @@ class SokobanApp {
     // GPS Controls & VISUELLES DREHEN
     document.getElementById('btn-set-anchor').addEventListener('click', () => {
       const res = this.gps.setAnchor(this.engine.player);
+      this.updateAnchorUi();
+      this.updateNavBanner();
       if (res.success) {
         this.showMessageToast(res.message);
       } else {
@@ -2367,6 +2439,7 @@ class SokobanApp {
       this.renderer.handleResize();
       this.gps.setRotation(nextAngle);
       this.rotationVal.textContent = `${nextAngle}°`;
+      this.updateNavBanner();
       this.showMessageToast(`Spielfeld gedreht auf ${nextAngle}°`);
     });
 
@@ -2458,10 +2531,25 @@ class SokobanApp {
   setupGpsCallbacks() {
     this.gps.onLocationUpdate = (data) => {
       const acc = Math.round(data.accuracy);
-      this.gpsAccIndicator.textContent = `Genauigkeit: ±${acc}m`;
+      if (this.gpsAccIndicator) {
+        this.gpsAccIndicator.textContent = `Satellit: ±${acc}m`;
+      }
       if (this.renderer) {
         this.renderer.gpsOverlay.accuracy = acc;
+        this.renderer.gpsOverlay.relativeMeters = data.relativeMeters;
       }
+
+      // Automatische Verankerung: Sobald im Spiel ein stabiles Signal da ist (<= 35m)
+      if (this.currentScreen === 'game' && !this.gps.anchor && data.accuracy <= 35) {
+        const res = this.gps.setAnchor(this.engine.player);
+        if (res.success) {
+          this.updateAnchorUi();
+          this.updateNavBanner();
+          this.showMessageToast(`🎯 Startpunkt automatisch verankert (±${acc}m)!`);
+        }
+      }
+
+      this.updateGpsTelemetryUi(data);
     };
 
     this.gps.onStepTriggered = (direction) => {
@@ -2474,6 +2562,96 @@ class SokobanApp {
       this.gpsPill.className = `pill pill-gps ${status}`;
       this.gpsPillText.textContent = status === 'locked' ? 'GPS Signal stark' : (status === 'searching' ? 'GPS sucht...' : 'GPS inaktiv');
     };
+  }
+
+  // Aktualisiert die Anzeige des Verankerungs-Status
+  updateAnchorUi() {
+    if (!this.gpsAnchorStatus) return;
+    if (this.gps.anchor) {
+      this.gpsAnchorStatus.textContent = '⚓ Verankert ✓';
+      this.gpsAnchorStatus.className = 'gps-anchor-badge active';
+      this.gpsAnchorStatus.title = `Startkachel verankert`;
+    } else {
+      this.gpsAnchorStatus.textContent = '⚓ Nicht verankert';
+      this.gpsAnchorStatus.className = 'gps-anchor-badge';
+    }
+  }
+
+  // Live GPS Telemetrie-Werte im HUD aktualisieren
+  updateGpsTelemetryUi(data) {
+    if (this.currentScreen !== 'game') return;
+
+    const rel = data.relativeMeters;
+    if (rel && this.gps.anchor) {
+      const dist = rel.dist.toFixed(1);
+      if (this.gpsDistIndicator) {
+        this.gpsDistIndicator.textContent = `📏 ${dist}m`;
+      }
+      if (this.navWalkText) {
+        this.navWalkText.textContent = `📏 Distanz: ${dist}m | 🧭 Laufrichtung: ${rel.cardinal} (${Math.round(rel.bearing)}°)`;
+      }
+
+      this.updateNavGuidance(rel);
+    }
+  }
+
+  // Dynamische Richtungsempfehlungen für den Geocacher draußen
+  updateNavGuidance(rel) {
+    if (!this.navAdviceText) return;
+    const targetDir = this.getTargetDirectionHint();
+
+    if (rel.dist < 1.5) {
+      this.navAdviceText.textContent = `💡 Gehe los in Richtung: ${targetDir}`;
+      return;
+    }
+
+    // Wenn der Geocacher sich bewegt, geben wir Hilfestellung
+    const b = rel.bearing;
+    let walkCardinal = 'Norden';
+    if (b >= 45 && b < 135) walkCardinal = 'Osten';
+    else if (b >= 135 && b < 225) walkCardinal = 'Süden';
+    else if (b >= 225 && b < 315) walkCardinal = 'Westen';
+
+    if (targetDir.toLowerCase().includes(walkCardinal.toLowerCase())) {
+      this.navAdviceText.textContent = `✨ Ausgezeichnet! Du läufst genau in Zielrichtung (${walkCardinal}).`;
+    } else {
+      this.navAdviceText.textContent = `💡 Du läufst nach ${walkCardinal}. Nächster Weg liegt im ${targetDir} (oder nutze '🔄 Drehen')!`;
+    }
+  }
+
+  // Berechnet aus Level-Zustand die empfohlene Laufrichtung
+  getTargetDirectionHint() {
+    if (!this.engine || !this.engine.currentLevel) return 'Ziel suchen';
+
+    const p = this.engine.player;
+    let target = null;
+    let minDist = 999;
+    for (const b of this.engine.boxes) {
+      const d = Math.abs(b.x - p.x) + Math.abs(b.y - p.y);
+      if (d < minDist) {
+        minDist = d;
+        target = b;
+      }
+    }
+
+    if (!target) return 'Alle Kisten auf Ziel';
+
+    const dx = target.x - p.x;
+    const dy = target.y - p.y;
+
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      return dx > 0 ? 'OSTEN (Rechts)' : 'WESTEN (Links)';
+    } else {
+      return dy > 0 ? 'SÜDEN (Unten)' : 'NORDEN (Oben)';
+    }
+  }
+
+  // Aktualisiert den Wegweiser-Banner
+  updateNavBanner() {
+    if (!this.navTargetHint) return;
+    const hint = this.getTargetDirectionHint();
+    const rot = this.renderer ? this.renderer.rotation : 0;
+    this.navTargetHint.innerHTML = `👉 Nächster Weg: <strong>${hint}</strong> (Feld: ${rot}°)`;
   }
 
   // Wechselt zwischen den Screens
@@ -2526,16 +2704,21 @@ class SokobanApp {
 
     this.updateHudStats();
 
-    // GPS vorbereiten
+    // GPS zurücksetzen & synchronisieren
     this.gps.anchor = null;
+    this.gps.syncPlayerTile(this.engine.player.x, this.engine.player.y);
+    this.updateAnchorUi();
     this.showScreen('game');
+    this.updateNavBanner();
 
-    // Hinweis zur Verankerung
-    setTimeout(() => {
-      if (!this.gps.anchor) {
-        this.showMessageToast('Tippe auf "🎯 Hier verankern", um deinen Startpunkt festzulegen!');
-      }
-    }, 400);
+    // Falls bereits eine gute GPS-Position da ist, sofort verankern!
+    if (this.gps.lastPosition && this.gps.accuracy <= 30) {
+      this.gps.setAnchor(this.engine.player);
+      this.updateAnchorUi();
+      this.showMessageToast(`🎯 Startpunkt automatisch verankert (±${Math.round(this.gps.accuracy)}m)!`);
+    } else {
+      this.showMessageToast('🛰️ Suche GPS-Signal für automatische Verankerung...');
+    }
   }
 
   // Rechnet Bildschirm-Richtung anhand des aktuellen Drehwinkels in Grid-Richtung um
@@ -2561,11 +2744,17 @@ class SokobanApp {
       this.showMessageToast('🚶 GPS-Outdoor-Modus aktiv: Laufe draußen um zu steuern! (Reviewer-Modus: 10x auf Hauptbild tippen)');
       return;
     }
-    const mappedDir = this.mapScreenDirectionToGrid(direction, this.renderer ? this.renderer.rotation : 0);
+
+    // WICHTIG: BEI ECHTEM GPS hat gps.js den Drehwinkel bereits eingerechnet!
+    // Nur bei manueller Steuerung (D-Pad/Tastatur) müssen wir die Bildschirm-Richtung umrechnen:
+    const mappedDir = isGps ? direction : this.mapScreenDirectionToGrid(direction, this.renderer ? this.renderer.rotation : 0);
     const res = this.engine.move(mappedDir);
     this.renderer.onMoveExecuted(res);
 
     if (res.success) {
+      // GPS-Tracking mit erfolgreicher Spielerbewegung synchronisieren
+      this.gps.syncPlayerTile(this.engine.player.x, this.engine.player.y);
+
       if (res.win) {
         this.audio.playWin();
         this.handleWin();
@@ -2579,11 +2768,28 @@ class SokobanApp {
         this.audio.playStep();
       }
     } else {
+      // Kollision gegen Wand oder blockierte Kiste
       this.audio.playBump();
       this.gps.triggerCollisionHaptic();
+
+      // GPS-Tracking auf tatsächliche Spielerposition rücksynchronisieren
+      this.gps.syncPlayerTile(this.engine.player.x, this.engine.player.y);
+
+      let dirName = 'diese Richtung';
+      if (mappedDir === 'up') dirName = 'NORDEN (Oben)';
+      else if (mappedDir === 'down') dirName = 'SÜDEN (Unten)';
+      else if (mappedDir === 'left') dirName = 'WESTEN (Links)';
+      else if (mappedDir === 'right') dirName = 'OSTEN (Rechts)';
+
+      if (res.reason === 'wall') {
+        this.showMessageToast(`🛑 Wand im ${dirName} blockiert! Laufe nach Osten oder nutze '🔄 Drehen'.`);
+      } else if (res.reason === 'blocked_box') {
+        this.showMessageToast(`📦 Kiste im ${dirName} kann nicht weiter geschoben werden!`);
+      }
     }
 
     this.updateHudStats();
+    this.updateNavBanner();
   }
 
   handleUndo() {
@@ -2591,14 +2797,18 @@ class SokobanApp {
     if (res.success) {
       this.audio.playUndo();
       this.renderer.initAnimations();
+      this.gps.syncPlayerTile(this.engine.player.x, this.engine.player.y);
       this.updateHudStats();
+      this.updateNavBanner();
     }
   }
 
   handleReset() {
     this.engine.reset();
     this.renderer.initAnimations();
+    this.gps.syncPlayerTile(this.engine.player.x, this.engine.player.y);
     this.updateHudStats();
+    this.updateNavBanner();
     this.showMessageToast('Level zurückgesetzt');
   }
 
@@ -2801,7 +3011,4 @@ class SokobanApp {
 // App starten sobald DOM geladen ist
 window.addEventListener('DOMContentLoaded', () => {
   window.app = new SokobanApp();
-});
-
-
-})();
+});\n\n// App starten sobald DOM geladen ist\nwindow.addEventListener('DOMContentLoaded', () => {\n  window.app = new SokobanApp();\n});\n\n})();

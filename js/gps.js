@@ -142,6 +142,12 @@ export class GpsEngine {
     }
   }
 
+  // Synchronisiert die interne GPS-Kachel mit der realen Spielerposition (z. B. nach Wandkollision oder Reset)
+  syncPlayerTile(x, y) {
+    this.lastStepTile = { x, y };
+    this.currentTile = { x, y };
+  }
+
   // Prüft, ob der Geocacher eine Nachbarkachel betreten hat
   checkStepTrigger(calcTile) {
     const now = performance.now();
@@ -150,29 +156,46 @@ export class GpsEngine {
     const dx = calcTile.x - this.lastStepTile.x;
     const dy = calcTile.y - this.lastStepTile.y;
 
-    // Nur genau einen orthogonalen Schritt (nicht diagonal) zulassen
-    if (Math.abs(dx) + Math.abs(dy) === 1) {
-      let direction = null;
-      if (dx === 1) direction = 'right';
-      else if (dx === -1) direction = 'left';
-      else if (dy === 1) direction = 'down';
-      else if (dy === -1) direction = 'up';
+    if (dx === 0 && dy === 0) return;
 
-      if (direction && this.onStepTriggered) {
-        this.lastStepTime = now;
-        this.lastStepTile = { x: calcTile.x, y: calcTile.y };
-        this.triggerHaptic(40);
-        this.onStepTriggered(direction, calcTile);
+    // Bestimme primäre Bewegungsachse (fängt auch Diagonallauf und GPS-Sprünge > 1 Kachel ab)
+    let stepDx = 0;
+    let stepDy = 0;
+    let direction = null;
+
+    if (Math.abs(dx) >= Math.abs(dy) && Math.abs(dx) >= 1) {
+      stepDx = dx > 0 ? 1 : -1;
+      direction = stepDx > 0 ? 'right' : 'left';
+    } else if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) >= 1) {
+      stepDy = dy > 0 ? 1 : -1;
+      direction = stepDy > 0 ? 'down' : 'up';
+    }
+
+    if (direction) {
+      this.lastStepTime = now;
+      // Schritt um genau 1 Kachel vorrücken
+      this.lastStepTile.x += stepDx;
+      this.lastStepTile.y += stepDy;
+
+      // Falls GPS durch Latenz oder schnelleres Gehen mehr als 2 Kacheln weit gesprungen ist,
+      // Abstand zur Zielkachel begrenzen, damit die Schritte sauber hintereinander folgen:
+      if (Math.abs(calcTile.x - this.lastStepTile.x) > 2) {
+        this.lastStepTile.x = calcTile.x - stepDx;
       }
-    } else if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-      // Größerer Sprung (GPS-Jitter) -> schrittweise anpassen ohne wilden Kistenschub
-      this.lastStepTile = { x: calcTile.x, y: calcTile.y };
+      if (Math.abs(calcTile.y - this.lastStepTile.y) > 2) {
+        this.lastStepTile.y = calcTile.y - stepDy;
+      }
+
+      this.triggerHaptic(45);
+      if (this.onStepTriggered) {
+        this.onStepTriggered(direction, { ...this.lastStepTile });
+      }
     }
   }
 
-  // Projiziert WGS84 Lat/Lon in relative Meter (Ost & Nord)
+  // Projiziert WGS84 Lat/Lon in relative Meter (Ost & Nord) inkl. Himmelsrichtung
   calculateMetersFromAnchor(lat, lon) {
-    if (!this.anchor) return { east: 0, north: 0, dist: 0 };
+    if (!this.anchor) return { east: 0, north: 0, dist: 0, bearing: 0, cardinal: 'N' };
 
     const avgLat = (this.anchor.lat + lat) / 2 * (Math.PI / 180);
     const dLat = (lat - this.anchor.lat) * (Math.PI / 180);
@@ -183,7 +206,17 @@ export class GpsEngine {
     const east = dLon * earthRadius * Math.cos(avgLat);
     const dist = Math.sqrt(east * east + north * north);
 
-    return { east, north, dist };
+    // Grad 0..360 (0 = Nord, 90 = Ost, 180 = Süd, 270 = West)
+    const bearing = (Math.atan2(east, north) * 180 / Math.PI + 360) % 360;
+    const cardinal = this.getCardinalDirection(bearing);
+
+    return { east, north, dist, bearing, cardinal };
+  }
+
+  getCardinalDirection(deg) {
+    const val = Math.floor((deg / 22.5) + 0.5) % 16;
+    const arr = ["N", "NNO", "NO", "ONO", "O", "OSO", "SO", "SSO", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+    return arr[val];
   }
 
   // Rotiert die Koordinaten und rechnet Meter in Gitterkacheln um

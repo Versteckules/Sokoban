@@ -95,7 +95,7 @@ export class SokobanRenderer {
 
     // GPS Radar Overlay
     this.gpsOverlay = {
-      enabled: false,
+      enabled: true,
       accuracy: 0,
       relativeMeters: null
     };
@@ -393,6 +393,9 @@ export class SokobanRenderer {
     }
 
     this.ctx.restore();
+
+    // 15. Realistische Kompass-Rose in Screen-Koordinaten (Orientierungshilfe)
+    this.renderCompassRose();
   }
 
   // Zeichnet den stimmungsvollen Hintergrund der Kammer
@@ -871,20 +874,86 @@ export class SokobanRenderer {
     }
   }
 
-  // GPS Radar
+  // GPS Radar & Genauigkeits-Aura
   renderGpsOverlay(time) {
     const cx = this.offsetX + (this.playerAnim.x + 0.5) * this.tileSize;
     const cy = this.offsetY + (this.playerAnim.y + 0.5) * this.tileSize;
-    const radarR = (this.tileSize * (this.gpsOverlay.accuracy || 4)) / 4;
+    const radarR = (this.tileSize * Math.min(10, Math.max(2, this.gpsOverlay.accuracy || 4))) / 4;
 
     this.ctx.save();
-    this.ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+    const pulse = Math.sin(time * 0.003) * 0.15 + 0.85;
+
+    // Pulsierender Radar-Kreis
+    this.ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
     this.ctx.lineWidth = 1.5;
     this.ctx.setLineDash([4, 4]);
     this.ctx.beginPath();
-    this.ctx.arc(cx, cy, Math.min(radarR, this.tileSize * 2.5), 0, Math.PI * 2);
+    this.ctx.arc(cx, cy, Math.min(radarR * pulse, this.tileSize * 3.5), 0, Math.PI * 2);
     this.ctx.stroke();
+
+    // Sanfte Radar-Aura
+    const radGrad = this.ctx.createRadialGradient(cx, cy, 2, cx, cy, Math.min(radarR * pulse, this.tileSize * 3.5));
+    radGrad.addColorStop(0, 'rgba(56, 189, 248, 0.08)');
+    radGrad.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+    this.ctx.fillStyle = radGrad;
+    this.ctx.beginPath();
+    this.ctx.arc(cx, cy, Math.min(radarR * pulse, this.tileSize * 3.5), 0, Math.PI * 2);
+    this.ctx.fill();
+
     this.ctx.restore();
+  }
+
+  // Zeichnet eine edle antike Kompass-Rose in der oberen rechten Ecke des Spielfelds
+  renderCompassRose() {
+    const ctx = this.ctx;
+    const width = this.canvas.width / this.dpr;
+    const r = 22;
+    const cx = width - r - 14;
+    const cy = r + 14;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+
+    // Hintergrund & Bronze-Rahmen
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Nord-Richtung unter Berücksichtigung der Spielfeld-Drehung
+    // Bei rotation = 0 zeigt Norden nach oben (-90° in Standard-Canvas-Winkeln)
+    const northRad = (-this.rotation) * Math.PI / 180;
+    ctx.rotate(northRad);
+
+    // Nord-Nadel (Leuchtend Rot)
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath();
+    ctx.moveTo(0, -r + 4);
+    ctx.lineTo(4, -1);
+    ctx.lineTo(-4, -1);
+    ctx.closePath();
+    ctx.fill();
+
+    // Süd-Nadel (Silber-Grau)
+    ctx.fillStyle = '#94a3b8';
+    ctx.beginPath();
+    ctx.moveTo(0, r - 4);
+    ctx.lineTo(4, 1);
+    ctx.lineTo(-4, 1);
+    ctx.closePath();
+    ctx.fill();
+
+    // N-Buchstabe
+    ctx.fillStyle = '#fca5a5';
+    ctx.font = 'bold 9px var(--font-mono, monospace)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('N', 0, -r + 4);
+
+    ctx.restore();
   }
 
   destroy() {

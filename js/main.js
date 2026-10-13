@@ -51,6 +51,14 @@ class SokobanApp {
     this.touchDpadContainer = document.getElementById('touch-dpad-container');
     this.reviewerBanner = document.getElementById('reviewer-badge-banner');
 
+    // Live Nav & Wegweiser HUD
+    this.gpsNavBanner = document.getElementById('gps-nav-banner');
+    this.navTargetHint = document.getElementById('nav-target-hint');
+    this.navWalkText = document.getElementById('nav-walk-text');
+    this.navAdviceText = document.getElementById('nav-advice-text');
+    this.gpsAnchorStatus = document.getElementById('gps-anchor-status');
+    this.gpsDistIndicator = document.getElementById('gps-dist-indicator');
+
     // Modals
     this.modalVictory = document.getElementById('modal-victory');
     this.modalVault = document.getElementById('modal-vault');
@@ -200,6 +208,8 @@ class SokobanApp {
     // GPS Controls & VISUELLES DREHEN
     document.getElementById('btn-set-anchor').addEventListener('click', () => {
       const res = this.gps.setAnchor(this.engine.player);
+      this.updateAnchorUi();
+      this.updateNavBanner();
       if (res.success) {
         this.showMessageToast(res.message);
       } else {
@@ -213,6 +223,7 @@ class SokobanApp {
       this.renderer.handleResize();
       this.gps.setRotation(nextAngle);
       this.rotationVal.textContent = `${nextAngle}°`;
+      this.updateNavBanner();
       this.showMessageToast(`Spielfeld gedreht auf ${nextAngle}°`);
     });
 
@@ -304,10 +315,25 @@ class SokobanApp {
   setupGpsCallbacks() {
     this.gps.onLocationUpdate = (data) => {
       const acc = Math.round(data.accuracy);
-      this.gpsAccIndicator.textContent = `Genauigkeit: ±${acc}m`;
+      if (this.gpsAccIndicator) {
+        this.gpsAccIndicator.textContent = `Satellit: ±${acc}m`;
+      }
       if (this.renderer) {
         this.renderer.gpsOverlay.accuracy = acc;
+        this.renderer.gpsOverlay.relativeMeters = data.relativeMeters;
       }
+
+      // Automatische Verankerung: Sobald im Spiel ein stabiles Signal da ist (<= 35m)
+      if (this.currentScreen === 'game' && !this.gps.anchor && data.accuracy <= 35) {
+        const res = this.gps.setAnchor(this.engine.player);
+        if (res.success) {
+          this.updateAnchorUi();
+          this.updateNavBanner();
+          this.showMessageToast(`🎯 Startpunkt automatisch verankert (±${acc}m)!`);
+        }
+      }
+
+      this.updateGpsTelemetryUi(data);
     };
 
     this.gps.onStepTriggered = (direction) => {
@@ -320,6 +346,96 @@ class SokobanApp {
       this.gpsPill.className = `pill pill-gps ${status}`;
       this.gpsPillText.textContent = status === 'locked' ? 'GPS Signal stark' : (status === 'searching' ? 'GPS sucht...' : 'GPS inaktiv');
     };
+  }
+
+  // Aktualisiert die Anzeige des Verankerungs-Status
+  updateAnchorUi() {
+    if (!this.gpsAnchorStatus) return;
+    if (this.gps.anchor) {
+      this.gpsAnchorStatus.textContent = '⚓ Verankert ✓';
+      this.gpsAnchorStatus.className = 'gps-anchor-badge active';
+      this.gpsAnchorStatus.title = `Startkachel verankert`;
+    } else {
+      this.gpsAnchorStatus.textContent = '⚓ Nicht verankert';
+      this.gpsAnchorStatus.className = 'gps-anchor-badge';
+    }
+  }
+
+  // Live GPS Telemetrie-Werte im HUD aktualisieren
+  updateGpsTelemetryUi(data) {
+    if (this.currentScreen !== 'game') return;
+
+    const rel = data.relativeMeters;
+    if (rel && this.gps.anchor) {
+      const dist = rel.dist.toFixed(1);
+      if (this.gpsDistIndicator) {
+        this.gpsDistIndicator.textContent = `📏 ${dist}m`;
+      }
+      if (this.navWalkText) {
+        this.navWalkText.textContent = `📏 Distanz: ${dist}m | 🧭 Laufrichtung: ${rel.cardinal} (${Math.round(rel.bearing)}°)`;
+      }
+
+      this.updateNavGuidance(rel);
+    }
+  }
+
+  // Dynamische Richtungsempfehlungen für den Geocacher draußen
+  updateNavGuidance(rel) {
+    if (!this.navAdviceText) return;
+    const targetDir = this.getTargetDirectionHint();
+
+    if (rel.dist < 1.5) {
+      this.navAdviceText.textContent = `💡 Gehe los in Richtung: ${targetDir}`;
+      return;
+    }
+
+    // Wenn der Geocacher sich bewegt, geben wir Hilfestellung
+    const b = rel.bearing;
+    let walkCardinal = 'Norden';
+    if (b >= 45 && b < 135) walkCardinal = 'Osten';
+    else if (b >= 135 && b < 225) walkCardinal = 'Süden';
+    else if (b >= 225 && b < 315) walkCardinal = 'Westen';
+
+    if (targetDir.toLowerCase().includes(walkCardinal.toLowerCase())) {
+      this.navAdviceText.textContent = `✨ Ausgezeichnet! Du läufst genau in Zielrichtung (${walkCardinal}).`;
+    } else {
+      this.navAdviceText.textContent = `💡 Du läufst nach ${walkCardinal}. Nächster Weg liegt im ${targetDir} (oder nutze '🔄 Drehen')!`;
+    }
+  }
+
+  // Berechnet aus Level-Zustand die empfohlene Laufrichtung
+  getTargetDirectionHint() {
+    if (!this.engine || !this.engine.currentLevel) return 'Ziel suchen';
+
+    const p = this.engine.player;
+    let target = null;
+    let minDist = 999;
+    for (const b of this.engine.boxes) {
+      const d = Math.abs(b.x - p.x) + Math.abs(b.y - p.y);
+      if (d < minDist) {
+        minDist = d;
+        target = b;
+      }
+    }
+
+    if (!target) return 'Alle Kisten auf Ziel';
+
+    const dx = target.x - p.x;
+    const dy = target.y - p.y;
+
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      return dx > 0 ? 'OSTEN (Rechts)' : 'WESTEN (Links)';
+    } else {
+      return dy > 0 ? 'SÜDEN (Unten)' : 'NORDEN (Oben)';
+    }
+  }
+
+  // Aktualisiert den Wegweiser-Banner
+  updateNavBanner() {
+    if (!this.navTargetHint) return;
+    const hint = this.getTargetDirectionHint();
+    const rot = this.renderer ? this.renderer.rotation : 0;
+    this.navTargetHint.innerHTML = `👉 Nächster Weg: <strong>${hint}</strong> (Feld: ${rot}°)`;
   }
 
   // Wechselt zwischen den Screens
@@ -372,16 +488,21 @@ class SokobanApp {
 
     this.updateHudStats();
 
-    // GPS vorbereiten
+    // GPS zurücksetzen & synchronisieren
     this.gps.anchor = null;
+    this.gps.syncPlayerTile(this.engine.player.x, this.engine.player.y);
+    this.updateAnchorUi();
     this.showScreen('game');
+    this.updateNavBanner();
 
-    // Hinweis zur Verankerung
-    setTimeout(() => {
-      if (!this.gps.anchor) {
-        this.showMessageToast('Tippe auf "🎯 Hier verankern", um deinen Startpunkt festzulegen!');
-      }
-    }, 400);
+    // Falls bereits eine gute GPS-Position da ist, sofort verankern!
+    if (this.gps.lastPosition && this.gps.accuracy <= 30) {
+      this.gps.setAnchor(this.engine.player);
+      this.updateAnchorUi();
+      this.showMessageToast(`🎯 Startpunkt automatisch verankert (±${Math.round(this.gps.accuracy)}m)!`);
+    } else {
+      this.showMessageToast('🛰️ Suche GPS-Signal für automatische Verankerung...');
+    }
   }
 
   // Rechnet Bildschirm-Richtung anhand des aktuellen Drehwinkels in Grid-Richtung um
@@ -407,11 +528,17 @@ class SokobanApp {
       this.showMessageToast('🚶 GPS-Outdoor-Modus aktiv: Laufe draußen um zu steuern! (Reviewer-Modus: 10x auf Hauptbild tippen)');
       return;
     }
-    const mappedDir = this.mapScreenDirectionToGrid(direction, this.renderer ? this.renderer.rotation : 0);
+
+    // WICHTIG: BEI ECHTEM GPS hat gps.js den Drehwinkel bereits eingerechnet!
+    // Nur bei manueller Steuerung (D-Pad/Tastatur) müssen wir die Bildschirm-Richtung umrechnen:
+    const mappedDir = isGps ? direction : this.mapScreenDirectionToGrid(direction, this.renderer ? this.renderer.rotation : 0);
     const res = this.engine.move(mappedDir);
     this.renderer.onMoveExecuted(res);
 
     if (res.success) {
+      // GPS-Tracking mit erfolgreicher Spielerbewegung synchronisieren
+      this.gps.syncPlayerTile(this.engine.player.x, this.engine.player.y);
+
       if (res.win) {
         this.audio.playWin();
         this.handleWin();
@@ -425,11 +552,28 @@ class SokobanApp {
         this.audio.playStep();
       }
     } else {
+      // Kollision gegen Wand oder blockierte Kiste
       this.audio.playBump();
       this.gps.triggerCollisionHaptic();
+
+      // GPS-Tracking auf tatsächliche Spielerposition rücksynchronisieren
+      this.gps.syncPlayerTile(this.engine.player.x, this.engine.player.y);
+
+      let dirName = 'diese Richtung';
+      if (mappedDir === 'up') dirName = 'NORDEN (Oben)';
+      else if (mappedDir === 'down') dirName = 'SÜDEN (Unten)';
+      else if (mappedDir === 'left') dirName = 'WESTEN (Links)';
+      else if (mappedDir === 'right') dirName = 'OSTEN (Rechts)';
+
+      if (res.reason === 'wall') {
+        this.showMessageToast(`🛑 Wand im ${dirName} blockiert! Laufe nach Osten oder nutze '🔄 Drehen'.`);
+      } else if (res.reason === 'blocked_box') {
+        this.showMessageToast(`📦 Kiste im ${dirName} kann nicht weiter geschoben werden!`);
+      }
     }
 
     this.updateHudStats();
+    this.updateNavBanner();
   }
 
   handleUndo() {
@@ -437,14 +581,18 @@ class SokobanApp {
     if (res.success) {
       this.audio.playUndo();
       this.renderer.initAnimations();
+      this.gps.syncPlayerTile(this.engine.player.x, this.engine.player.y);
       this.updateHudStats();
+      this.updateNavBanner();
     }
   }
 
   handleReset() {
     this.engine.reset();
     this.renderer.initAnimations();
+    this.gps.syncPlayerTile(this.engine.player.x, this.engine.player.y);
     this.updateHudStats();
+    this.updateNavBanner();
     this.showMessageToast('Level zurückgesetzt');
   }
 

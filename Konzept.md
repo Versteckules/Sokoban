@@ -198,3 +198,10 @@ sokoban/
   * Maßgebliche Optimierung für Handys und Tablets: `100dvh` Dynamic Viewport Height, Safe-Area-Support (Notch/Homebar), Touch-Targets mit min. 44px und flexibles No-Scroll-Spielfeldlayout.
   * Interaktives Card-basiertes FAQ- & Anleitungs-Modal (erreichbar über `❓` im globalen Header, `❓ Hilfe` in der GPS-Leiste und den Startseiten-Button).
   * Ausführliche Erklärungen zu „Hier verankern“ (Re-Zentrieren bei Hindernissen), „Drehen“ (Ausrichtung an Platzkanten), Kachelgröße (3m, 4m, 5m), GPS-Laufmechanik, Undo/Reset und Kryptotresor.
+* [x] **Schritt 9: GPS-Outdoor-Laufoptimierung, Auto-Verankerung & Richtungs-Guidance**
+  * **Behebung des Schritt-Verwerfungs-Bugs:** Schnelles Gehen oder GPS-Latenz (> 1 Kachel Delta) wird nicht mehr als Jitter verworfen, sondern schrittweise sauber und kontinuierlich ausgeführt.
+  * **Behebung des Doppel-Rotations-Bugs:** Bei `isGps` wurde der Drehwinkel nicht mehr doppelt rotiert.
+  * **Automatische Startpunkt-Verankerung:** Bei Signal-Empfang wird der Startpunkt automatisch kalibriert, sodass Spieler sofort loslaufen können.
+  * **Live-Wegweiser & Kompass-HUD:** Dynamischer Banner zeigt Zielrichtung (z. B. „Level 1: Ziel liegt im OSTEN“), gelaufene Meter und Himmelsrichtung an.
+  * **Wandkollisions-Hinweise:** Läuft der Spieler gegen eine Wand, erscheint ein klarer visueller Hinweis inklusive Drehungs-Empfehlung.
+  * **Canvas Kompass-Rose:** Hochwertige Miniatur-Kompassrose in der Ecke des Spielfelds visualisiert die Ausrichtung der Pyramidenkammer zur realen Welt.

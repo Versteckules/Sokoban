@@ -156,6 +156,18 @@
           </div>
         </div>
 
+        <!-- LIVE GPS WEGWEISER & RICHTUNGS-LEITFADEN -->
+        <div class="gps-nav-banner" id="gps-nav-banner">
+          <div class="nav-target-col">
+            <span class="nav-target-label">KOMPASS & WEGWEISER:</span>
+            <span class="nav-target-val" id="nav-target-hint">👉 Gehe nach OSTEN (Rechts)</span>
+          </div>
+          <div class="nav-telemetry-col">
+            <span class="nav-walk-info" id="nav-walk-text">📏 Distanz: 0.0m | 🧭 Signal wird gesucht...</span>
+            <span class="nav-advice-info" id="nav-advice-text">💡 Startpunkt wird bei Signal automatisch verankert</span>
+          </div>
+        </div>
+
         <!-- CANVAS BEREICH -->
         <div class="canvas-wrapper" id="canvas-wrapper">
           <canvas id="sokoban-canvas"></canvas>
@@ -164,7 +176,9 @@
         <!-- GPS KALIBRIERUNGS- & CONTROL-LEISTE (FÜR OUTDOOR-SPIELER) -->
         <div class="gps-control-bar" id="gps-control-bar">
           <div class="gps-telemetry">
+            <span class="gps-anchor-badge" id="gps-anchor-status">⚓ Kalibriert...</span>
             <span class="gps-accuracy-indicator" id="gps-acc-indicator">Genauigkeit: ±--m</span>
+            <span class="gps-dist-indicator" id="gps-dist-indicator">📏 0.0m</span>
             <span class="gps-mode-tag" id="gps-mode-tag">GPS: Draußen</span>
             <button id="btn-gps-help" class="btn-gps-help" title="Was bedeuten Verankern, Drehen etc.?">
               ❓ Hilfe
