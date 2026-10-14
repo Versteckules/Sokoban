@@ -199,7 +199,7 @@ class SokobanApp {
           this.lastManualTurnTime = performance.now();
           this.audio.playStep();
           this.updateHudStats();
-        } else {
+        } else if (this.isReviewerMode) {
           this.executeMove(targetGrid);
         }
       });
@@ -216,7 +216,7 @@ class SokobanApp {
           this.lastManualTurnTime = performance.now();
           this.audio.playStep();
           this.updateHudStats();
-        } else {
+        } else if (this.isReviewerMode) {
           this.executeMove(targetGrid);
         }
       });
@@ -224,8 +224,16 @@ class SokobanApp {
 
     if (this.btnStepForward) {
       this.btnStepForward.addEventListener('click', () => {
-        if (this.engine && this.engine.player) {
-          this.executeMove(this.engine.player.facing);
+        if (this.isReviewerMode) {
+          // Im Reviewer-Modus: Schritt vorwärts ausführen
+          if (this.engine && this.engine.player) {
+            this.executeMove(this.engine.player.facing);
+          }
+        } else {
+          // Im normalen Outdoor-Modus: GPS-Referenzpunkt "Hier verankern"
+          this.gps.resetStepOrigin();
+          this.audio.playStep();
+          this.showMessageToast('🎯 GPS-Startpunkt hier verankert! Laufe in eine Richtung los.');
         }
       });
     }
@@ -234,55 +242,60 @@ class SokobanApp {
       this.btnRotateField.addEventListener('click', () => this.rotateField());
     }
 
-    // D-Pad Toggle Button
-    const btnToggleDpad = document.getElementById('btn-toggle-dpad');
-    if (btnToggleDpad) {
-      btnToggleDpad.addEventListener('click', () => {
-        if (this.touchDpadContainer) {
-          const isHidden = this.touchDpadContainer.style.display === 'none' || !this.touchDpadContainer.style.display;
-          this.touchDpadContainer.style.display = isHidden ? 'flex' : 'none';
-          btnToggleDpad.classList.toggle('active', isHidden);
-        }
-      });
-    }
-
-    // Direktes Antippen des Spielfelds (1-Klick: Drehen & Laufen / Schieben)
+    // Direktes Antippen des Spielfelds (Im Outdoor-Modus: Blick drehen | Im Reviewer-Modus: Bewegen)
     if (this.canvas) {
       this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
     }
 
-    // Tastatursteuerung (Intuitive Steuerung auf Desktop/Laptop: Bewegen & Kistenschieben!)
+    // Tastatursteuerung: WASD / Pfeiltasten sind NUR im Reviewer-/Entwicklermodus aktiv!
     window.addEventListener('keydown', (e) => {
       if (this.currentScreen !== 'game' || !this.engine || !this.engine.player) return;
 
       const key = e.key.toLowerCase();
-      if (key === 'arrowup' || key === 'w') {
-        e.preventDefault();
-        this.executeMove(this.screenDirToGrid('up'));
-      } else if (key === 'arrowdown' || key === 's') {
-        e.preventDefault();
-        this.executeMove(this.screenDirToGrid('down'));
-      } else if (key === 'arrowleft' || key === 'a') {
-        e.preventDefault();
-        this.executeMove(this.screenDirToGrid('left'));
-      } else if (key === 'arrowright' || key === 'd') {
-        e.preventDefault();
-        this.executeMove(this.screenDirToGrid('right'));
-      } else if (key === ' ' || key === 'spacebar' || key === 'enter') {
-        e.preventDefault();
-        this.executeMove(this.engine.player.facing);
-      } else if (key === 'q') {
-        e.preventDefault();
-        this.turnPlayerRelative(true);
-      } else if (key === 'e') {
-        e.preventDefault();
-        this.turnPlayerRelative(false);
-      } else if (key === 'z') {
+
+      // Undo & Reset funktionieren immer
+      if (key === 'z') {
         e.preventDefault();
         this.handleUndo();
+        return;
       } else if (key === 'r') {
         e.preventDefault();
         this.handleReset();
+        return;
+      }
+
+      const isMoveKey = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd', ' ', 'spacebar', 'enter', 'q', 'e'].includes(key);
+      if (isMoveKey) {
+        if (!this.isReviewerMode) {
+          // Im normalen Outdoor-Modus: Tastatur ist gesperrt!
+          e.preventDefault();
+          this.showMessageToast('🚶 Outdoor-Modus aktiv: Bewege dich im echten Leben, um die Figur zu steuern!');
+          return;
+        }
+
+        // --- ENTWICKLER- / REVIEWER-MODUS ---
+        if (key === 'arrowup' || key === 'w') {
+          e.preventDefault();
+          this.executeMove(this.screenDirToGrid('up'));
+        } else if (key === 'arrowdown' || key === 's') {
+          e.preventDefault();
+          this.executeMove(this.screenDirToGrid('down'));
+        } else if (key === 'arrowleft' || key === 'a') {
+          e.preventDefault();
+          this.executeMove(this.screenDirToGrid('left'));
+        } else if (key === 'arrowright' || key === 'd') {
+          e.preventDefault();
+          this.executeMove(this.screenDirToGrid('right'));
+        } else if (key === ' ' || key === 'spacebar' || key === 'enter') {
+          e.preventDefault();
+          this.executeMove(this.engine.player.facing);
+        } else if (key === 'q') {
+          e.preventDefault();
+          this.turnPlayerRelative(true);
+        } else if (key === 'e') {
+          e.preventDefault();
+          this.turnPlayerRelative(false);
+        }
       }
     });
 
@@ -298,11 +311,11 @@ class SokobanApp {
       el.addEventListener('click', handler);
     };
 
-    bindTouch('btn-touch-up', () => this.executeMove(this.screenDirToGrid('up')));
-    bindTouch('btn-touch-down', () => this.executeMove(this.screenDirToGrid('down')));
-    bindTouch('btn-touch-left', () => this.executeMove(this.screenDirToGrid('left')));
-    bindTouch('btn-touch-right', () => this.executeMove(this.screenDirToGrid('right')));
-    bindTouch('btn-touch-center', () => this.executeMove(this.engine.player.facing));
+    bindTouch('btn-touch-up', () => { if (this.isReviewerMode) this.executeMove(this.screenDirToGrid('up')); });
+    bindTouch('btn-touch-down', () => { if (this.isReviewerMode) this.executeMove(this.screenDirToGrid('down')); });
+    bindTouch('btn-touch-left', () => { if (this.isReviewerMode) this.executeMove(this.screenDirToGrid('left')); });
+    bindTouch('btn-touch-right', () => { if (this.isReviewerMode) this.executeMove(this.screenDirToGrid('right')); });
+    bindTouch('btn-touch-center', () => { if (this.isReviewerMode) this.executeMove(this.engine.player.facing); });
     bindTouch('btn-touch-undo', () => this.handleUndo());
     bindTouch('btn-touch-reset', () => this.handleReset());
 
@@ -412,13 +425,30 @@ class SokobanApp {
     return dirs[gIdx];
   }
 
+  // Mappt GPS-Himmelsrichtung (Peilung 0°-360°) unter Felddrehung auf interne Gitter-Richtung ('up', 'right', 'down', 'left')
+  bearingToGridDir(bearing) {
+    if (typeof bearing === 'string') {
+      return this.screenDirToGrid(bearing);
+    }
+    if (typeof bearing !== 'number' || isNaN(bearing)) {
+      return this.engine && this.engine.player ? this.engine.player.facing : 'up';
+    }
+    const fieldRot = this.renderer ? this.renderer.rotation : 0;
+    const relAngle = (bearing - fieldRot + 360) % 360;
+    if (relAngle >= 45 && relAngle < 135) return 'right';
+    if (relAngle >= 135 && relAngle < 225) return 'down';
+    if (relAngle >= 225 && relAngle < 315) return 'left';
+    return 'up';
+  }
+
   // GPS & Bewegungssensor Callbacks
   setupGpsCallbacks() {
-    this.gps.onStepTriggered = (walkDirection) => {
+    this.gps.onStepTriggered = (bearing, distance) => {
       if (this.currentScreen === 'game' && this.engine && this.engine.player) {
-        // Echter Schritt im Freien per GPS: Wenn Himmelsrichtung erkannt, laufe dorthin!
-        // Ansonsten laufe in die aktuelle Blickrichtung der Figur.
-        const targetDir = walkDirection ? this.screenDirToGrid(walkDirection) : this.engine.player.facing;
+        // Echter Schritt im Freien per GPS: Richtung aus GPS-Peilung & Spielfeld-Ausrichtung ermitteln
+        const targetDir = this.bearingToGridDir(bearing);
+        const dirNames = { up: 'NORD', right: 'OST', down: 'SÜD', left: 'WEST' };
+        this.showMessageToast(`🚶 Schritt erkannt: ${dirNames[targetDir] || targetDir} (${(distance || 0).toFixed(1)}m)`);
         this.executeMove(targetDir);
       }
     };
@@ -428,7 +458,7 @@ class SokobanApp {
         this.gpsPill.className = `pill pill-gps ${status}`;
       }
       if (this.gpsPillText) {
-        this.gpsPillText.textContent = status === 'locked' ? 'GPS aktiv' : (status === 'searching' ? 'GPS sucht...' : 'GPS bereit');
+        this.gpsPillText.textContent = msg || (status === 'locked' ? 'GPS aktiv' : (status === 'searching' ? 'GPS sucht...' : 'GPS bereit'));
       }
     };
   }
@@ -583,8 +613,22 @@ class SokobanApp {
     }
 
     if (targetDir) {
-      // 1-Click: Drehen & sofort Laufen / Schieben
-      this.executeMove(this.screenDirToGrid(targetDir));
+      const gridDir = this.screenDirToGrid(targetDir);
+      if (this.isReviewerMode) {
+        // Im Reviewer-Modus: Schritt & Kiste schieben
+        this.executeMove(gridDir);
+      } else {
+        // Im normalen Outdoor-Modus: Nur Blick & Laterne drehen (keine Bewegung ohne echte Schritte!)
+        if (this.engine.player.facing !== gridDir) {
+          this.engine.player.facing = gridDir;
+          if (this.renderer && this.renderer.playerAnim) {
+            this.renderer.playerAnim.facing = gridDir;
+          }
+          this.lastManualTurnTime = performance.now();
+          this.audio.playStep();
+          this.updateHudStats();
+        }
+      }
     }
   }
 
@@ -831,11 +875,20 @@ class SokobanApp {
   // Aktiviert den Reviewer-Modus (Tastatur & Touch-D-Pad)
   activateReviewerMode() {
     this.isReviewerMode = true;
-    this.touchDpadContainer.style.display = 'flex';
-    this.reviewerBanner.style.display = 'block';
-    setTimeout(() => {
-      this.reviewerBanner.style.display = 'none';
-    }, 4000);
+    if (this.touchDpadContainer) {
+      this.touchDpadContainer.style.display = 'flex';
+    }
+    if (this.reviewerBanner) {
+      this.reviewerBanner.style.display = 'block';
+      setTimeout(() => {
+        this.reviewerBanner.style.display = 'none';
+      }, 4000);
+    }
+
+    const stepBtnIcon = document.getElementById('step-btn-icon');
+    const stepBtnLabel = document.getElementById('step-btn-label');
+    if (stepBtnIcon) stepBtnIcon.textContent = '🚶';
+    if (stepBtnLabel) stepBtnLabel.textContent = 'Vorwärts';
 
     const modeTag = document.getElementById('gps-mode-tag');
     if (modeTag) {

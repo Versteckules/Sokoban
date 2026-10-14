@@ -9,56 +9,58 @@ window.testLog = [];
 window.addEventListener('load', () => {
   setTimeout(() => {
     try {
-      // 1. Enter pyramid
+      // 1. Enter pyramid and open Level 1
       document.getElementById('btn-enter-pyramid').click();
-      window.testLog.push('Entered pyramid');
-      
-      // 2. Click Level 1
       const stone0 = document.querySelector('.pyramid-stone[data-index="0"]');
       if (stone0) stone0.click();
-      window.testLog.push('Screen after clicking Level 1: ' + window.app.currentScreen);
       
       const p = window.app.engine.player;
-      window.testLog.push('Initial: pos=(' + p.x + ',' + p.y + '), facing=' + p.facing);
+      window.testLog.push('Started Level 1: pos=(' + p.x + ',' + p.y + '), facing=' + p.facing + ', isReviewerMode=' + window.app.isReviewerMode);
       
-      // 3. User clicks btn-turn-right (to face the crate on the right!)
-      document.getElementById('btn-turn-right').click();
-      window.testLog.push('After clicking btn-turn-right: facing=' + p.facing);
-      
-      // 4. User clicks btn-step-forward
-      document.getElementById('btn-step-forward').click();
-      window.testLog.push('After clicking btn-step-forward: pos=(' + p.x + ',' + p.y + '), boxes=' + JSON.stringify(window.app.engine.boxes));
-      
-      // 5. Reset level
-      window.app.engine.reset();
-      window.testLog.push('After Reset: pos=(' + window.app.engine.player.x + ',' + window.app.engine.player.y + '), facing=' + window.app.engine.player.facing + ', boxes=' + JSON.stringify(window.app.engine.boxes));
-      
-      // 6. User presses ArrowRight key
-      const keyEvt = new KeyboardEvent('keydown', { key: 'ArrowRight' });
-      window.dispatchEvent(keyEvt);
-      // 8. Test Touch D-Pad
-      window.app.engine.reset();
-      document.getElementById('btn-touch-right').click();
-      window.testLog.push('After Touch D-Pad Right: pos=(' + window.app.engine.player.x + ',' + window.app.engine.player.y + '), boxes=' + JSON.stringify(window.app.engine.boxes));
+      // 2. NORMAL MODE: Press WASD 'd'
+      const keyD = new KeyboardEvent('keydown', { key: 'd' });
+      window.dispatchEvent(keyD);
+      const toast1 = document.getElementById('game-toast') ? document.getElementById('game-toast').textContent : '';
+      window.testLog.push('Normal Mode - after pressing D: pos=(' + p.x + ',' + p.y + '), toast="' + toast1 + '"');
 
-      // 9. Test GPS step with walk direction
-      window.app.engine.reset();
-      window.app.gps.triggerStep('right');
-      window.testLog.push('After GPS Step Right: pos=(' + window.app.engine.player.x + ',' + window.app.engine.player.y + '), boxes=' + JSON.stringify(window.app.engine.boxes));
+      // 3. NORMAL MODE: Press ArrowRight
+      const keyArrow = new KeyboardEvent('keydown', { key: 'ArrowRight' });
+      window.dispatchEvent(keyArrow);
+      window.testLog.push('Normal Mode - after ArrowRight: pos=(' + p.x + ',' + p.y + ')');
 
-      // 10. Test Field Rotation and relative controls
+      // 4. NORMAL MODE: Click Canvas to the right of player
+      const canvas = document.getElementById('sokoban-canvas');
+      const rect = canvas.getBoundingClientRect();
+      const clickEvt = new MouseEvent('click', {
+        clientX: rect.left + canvas.width / (2 * (window.devicePixelRatio||1)) + 60,
+        clientY: rect.top + canvas.height / (2 * (window.devicePixelRatio||1))
+      });
+      canvas.dispatchEvent(clickEvt);
+      window.testLog.push('Normal Mode - after Canvas Click right: pos=(' + p.x + ',' + p.y + '), facing=' + p.facing);
+
+      // 5. NORMAL MODE: Outdoor GPS walking!
+      // Simulate GPS moving 2.2m East (lat=52.5, lon=13.4 -> lat=52.5, lon=13.400035)
+      // Or triggerStep with bearing 90 (East)
+      window.app.gps.triggerStep(90);
+      window.testLog.push('Normal Mode - after GPS walking East (90 deg): pos=(' + p.x + ',' + p.y + '), boxes=' + JSON.stringify(window.app.engine.boxes));
+
+      // 6. REVIEWER MODE: Activate reviewer mode
       window.app.engine.reset();
-      window.app.rotateField(); // 90°
-      window.testLog.push('Field rotated to: ' + window.app.renderer.rotation + '°');
-      // On screen, right is still screenDir 'right'
-      const gridDirForScreenRight = window.app.screenDirToGrid('right');
-      window.testLog.push('Screen right maps to grid: ' + gridDirForScreenRight);
+      window.app.activateReviewerMode();
+      window.testLog.push('Reviewer Mode activated: isReviewerMode=' + window.app.isReviewerMode);
+
+      // In Reviewer Mode: Press 'd'
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd' }));
+      window.testLog.push('Reviewer Mode - after pressing D: pos=(' + window.app.engine.player.x + ',' + window.app.engine.player.y + '), boxes=' + JSON.stringify(window.app.engine.boxes));
+
+      // Check Audio: verify no synth drone
+      window.testLog.push('Audio synth drone active: ' + (window.app.audio.ambientOscillators.length > 0));
 
       document.getElementById('sim-log').textContent = JSON.stringify(window.testLog);
     } catch(e) {
       document.getElementById('sim-log').textContent = 'ERR: ' + e.message + ' ' + e.stack;
     }
-  }, 200);
+  }, 250);
 });
 </script>
 """
@@ -73,8 +75,9 @@ with open('test_user_sim.html', 'w', encoding='utf-8') as f:
 cmd = [r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe', '--headless=new', '--virtual-time-budget=2000', '--dump-dom', 'file:///c:/Users/flaem/Desktop/Antigravity/Sokoban/Sokoban/test_user_sim.html']
 res = subprocess.run(cmd, capture_output=True, encoding='utf-8', errors='replace')
 m = re.search(r'<div id="sim-log">(.*?)</div>', res.stdout)
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
 if m:
     print('SIMULATION OUTPUT:\n', html.unescape(m.group(1)))
 else:
     print('NO SIM OUTPUT. STDOUT END:\n', res.stdout[-600:])
-

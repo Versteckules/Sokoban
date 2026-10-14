@@ -625,14 +625,11 @@ class AudioManager {
   initMusic() {
     this.musicElement = new Audio('assets/music.mp3');
     this.musicElement.loop = true;
-    this.musicElement.volume = 0.45;
+    this.musicElement.volume = 0.40;
 
-    // Fallback: Wenn assets/music.mp3 nicht gefunden wird (404), starte Ambient-Synthesizer
+    // Falls keine eigene assets/music.mp3 existiert, bleibt der Hintergrund ruhig (kein nerviges Synthesizer-Brummen)
     this.musicElement.addEventListener('error', () => {
-      console.info('assets/music.mp3 nicht geladen – aktiviere stimmungsvollen Ambient-Synthesizer.');
-      if (this.isMusicPlaying && !this.isMuted) {
-        this.startAmbientDrone();
-      }
+      // Ruhiger Hintergrund, nur Soundeffekte aktiv
     });
   }
 
@@ -644,11 +641,9 @@ class AudioManager {
       const playPromise = this.musicElement.play();
       if (playPromise !== undefined) {
         playPromise.catch(() => {
-          this.startAmbientDrone();
+          // Keine Musikdatei vorhanden oder Autoplay blockiert: Ruhig bleiben
         });
       }
-    } else {
-      this.startAmbientDrone();
     }
   }
 
@@ -657,55 +652,26 @@ class AudioManager {
     if (this.musicElement) {
       this.musicElement.pause();
     }
-    this.stopAmbientDrone();
   }
 
   toggleMute() {
     this.isMuted = !this.isMuted;
     if (this.isMuted) {
       if (this.musicElement) this.musicElement.pause();
-      this.stopAmbientDrone();
     } else {
-      if (this.isMusicPlaying) {
-        this.startMusic();
+      if (this.isMusicPlaying && this.musicElement) {
+        this.musicElement.play().catch(() => {});
       }
     }
     return this.isMuted;
   }
 
-  // Synthetisiert einen tiefen, mystischen Ambient-Drone (Pyramiden-Stimmung)
   startAmbientDrone() {
-    if (!this.ctx || this.isMuted || this.ambientOscillators.length > 0) return;
-    try {
-      const baseFreqs = [55, 82.5, 110]; // A1, E2, A2
-      baseFreqs.forEach((freq, idx) => {
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = idx === 0 ? 'sine' : 'triangle';
-        osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
-
-        gain.gain.setValueAtTime(0.001, this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.04 / (idx + 1), this.ctx.currentTime + 3);
-
-        osc.connect(gain);
-        gain.connect(this.ctx.destination);
-        osc.start();
-        this.ambientOscillators.push({ osc, gain });
-      });
-    } catch (e) {
-      console.warn('Ambient Drone Fehler:', e);
-    }
+    // Deaktiviert: Kein nerviges 55Hz Synthesizer-Brummen
   }
 
   stopAmbientDrone() {
-    if (!this.ctx || this.ambientOscillators.length === 0) return;
-    this.ambientOscillators.forEach(({ osc, gain }) => {
-      try {
-        gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.5);
-        setTimeout(() => osc.stop(), 500);
-      } catch (e) {}
-    });
-    this.ambientOscillators = [];
+    // Deaktiviert
   }
 
   // Soundeffekt: Leiser Schritt auf Steinplatten
@@ -909,16 +875,21 @@ class GpsEngine {
     // Referenzpunkt für Schritt-Erkennung
     this.stepOriginCoord = null;
     this.prevStepCoord = null;
-    // Glättungskoordinaten (Low-Pass Filter)
-    this.filteredLat = null;
-    this.filteredLon = null;
 
-    // Schritt-Schwelle: Mindestens 3.5m echte Ortsveränderung
-    this.stepThresholdMeters = options.stepThreshold || 3.5;
+    // Live-Distanz zum aktuellen Schritt
+    this.currentWalkDistance = 0;
 
-    // Cooldown gegen Doppelschritte (mindestens 1200ms)
+    // Schritt-Schwelle: 2.0 Meter echte Ortsveränderung (ca. 2.5 bis 3 Schritte im Freien)
+    this.stepThresholdMeters = options.stepThreshold || 2.0;
+
+    // Cooldown gegen Doppelschritte (mindestens 1000ms)
     this.lastStepTime = -10000;
-    this.stepCooldownMs = 1200;
+    this.stepCooldownMs = 1000;
+
+    // Schrittzähler über Pedometer / Accelerometer (DeviceMotion)
+    this.motionStepsCount = 0;
+    this.lastMotionPeakTime = 0;
+    this.isMotionListening = false;
 
     // Callbacks
     this.onLocationUpdate = null;
@@ -931,14 +902,14 @@ class GpsEngine {
     this.tileSize = 4.0;
   }
 
-  // Startet kontinuierliche GPS-Standorterfassung
+  // Startet kontinuierliche GPS-Standorterfassung & Bewegungssensoren
   startTracking() {
     if (this.isTracking) return true;
     this.isTracking = true;
     this.stepOriginCoord = null;
     this.prevStepCoord = null;
-    this.filteredLat = null;
-    this.filteredLon = null;
+    this.currentWalkDistance = 0;
+    this.motionStepsCount = 0;
 
     if ('geolocation' in navigator) {
       this.setStatus('searching', 'Satelliten werden gesucht...');
@@ -959,6 +930,7 @@ class GpsEngine {
       this.setStatus('idle', 'Kein GPS');
     }
 
+    this.startMotionStepSensor();
     return true;
   }
 
@@ -971,135 +943,135 @@ class GpsEngine {
     this.isTracking = false;
     this.stepOriginCoord = null;
     this.prevStepCoord = null;
-    this.filteredLat = null;
-    this.filteredLon = null;
+    this.currentWalkDistance = 0;
+    this.stopMotionStepSensor();
     this.setStatus('idle', 'Pausiert');
   }
 
-  // Verarbeitet GPS-Positionsänderungen mit Jitter-Filter
+  // Bewegungssensor (Pedometer / Schritt-Erkennung per Beschleunigungsmesser)
+  startMotionStepSensor() {
+    if (this.isMotionListening) return;
+    if (typeof window !== 'undefined' && 'DeviceMotionEvent' in window) {
+      this.motionHandler = (e) => this.handleDeviceMotion(e);
+      window.addEventListener('devicemotion', this.motionHandler, { passive: true });
+      this.isMotionListening = true;
+    }
+  }
+
+  stopMotionStepSensor() {
+    if (this.isMotionListening && this.motionHandler) {
+      window.removeEventListener('devicemotion', this.motionHandler);
+      this.isMotionListening = false;
+    }
+  }
+
+  // Erkennt physische Schritte über den Beschleunigungssensor (Stoß beim Gehen)
+  handleDeviceMotion(e) {
+    if (!this.isTracking) return;
+    const acc = e.accelerationIncludingGravity || e.acceleration;
+    if (!acc) return;
+
+    const x = acc.x || 0;
+    const y = acc.y || 0;
+    const z = acc.z || 0;
+    const mag = Math.sqrt(x * x + y * y + z * z);
+
+    // Erdanziehung abziehen (~9.81 m/s²)
+    const delta = Math.abs(mag - 9.81);
+    const now = performance.now();
+
+    // Typischer Schritt-Peak beim Laufen: Delta > 2.0 m/s² mit min. 320ms Intervall
+    if (delta > 2.0 && (now - this.lastMotionPeakTime > 320)) {
+      this.lastMotionPeakTime = now;
+      this.motionStepsCount++;
+    }
+  }
+
+  // Verarbeitet GPS-Positionsänderungen
   handlePositionUpdate(pos) {
     this.lastPosition = pos;
     this.accuracy = pos.coords.accuracy || 999;
     this.hasPermission = true;
 
-    if (this.accuracy <= 20) {
-      this.setStatus('locked', `GPS aktiv (±${Math.round(this.accuracy)}m)`);
-    } else if (this.accuracy <= 35) {
-      this.setStatus('searching', `GPS ungenau (±${Math.round(this.accuracy)}m)`);
-    } else {
-      this.setStatus('searching', `Suche Signal (±${Math.round(this.accuracy)}m)`);
-    }
+    const currentLat = pos.coords.latitude;
+    const currentLon = pos.coords.longitude;
 
-    const { latitude, longitude, speed } = pos.coords;
-
-    // 1. Tiefpass-Filter (EWMA) dämpft Messrauschen im Stand
-    const filterAlpha = 0.35;
-    if (this.filteredLat === null) {
-      this.filteredLat = latitude;
-      this.filteredLon = longitude;
-    } else {
-      this.filteredLat = this.filteredLat * (1 - filterAlpha) + latitude * filterAlpha;
-      this.filteredLon = this.filteredLon * (1 - filterAlpha) + longitude * filterAlpha;
-    }
-
-    const currentLat = this.filteredLat;
-    const currentLon = this.filteredLon;
-
-    // 2. Erster Fix: Als Ausgangspunkt setzen
+    // Erster GPS-Fix: Als Ausgangspunkt setzen
     if (!this.stepOriginCoord) {
       this.stepOriginCoord = { lat: currentLat, lon: currentLon };
-      if (this.onLocationUpdate) this.onLocationUpdate(pos);
+      this.setStatus('locked', `GPS aktiv (±${Math.round(this.accuracy)}m) | 0.0m / ${this.stepThresholdMeters}m`);
+      if (this.onLocationUpdate) this.onLocationUpdate(pos, 0);
       return;
     }
 
-    // 3. Stationär-Check über GPS-Doppler-Geschwindigkeit
-    // Wenn Smartphone meldet: Geschwindigkeit < 0.35 m/s (~1.2 km/h), steht der Spieler still!
-    const isStationaryBySpeed = (speed !== null && speed !== undefined && !isNaN(speed) && speed < 0.35);
-
-    // 4. Distanz ZUM AUSGANGSPUNKT berechnen
+    // Distanz ZUM AUSGANGSPUNKT in Metern berechnen
     const distFromOrigin = this.haversineMeters(
       this.stepOriginCoord.lat,
       this.stepOriginCoord.lon,
       currentLat,
       currentLon
     );
+    this.currentWalkDistance = distFromOrigin;
+
+    // Status-Update mit Live-Distanzanzeige
+    const distText = `${distFromOrigin.toFixed(1)}m / ${this.stepThresholdMeters}m`;
+    if (this.accuracy <= 25) {
+      this.setStatus('locked', `GPS aktiv (±${Math.round(this.accuracy)}m) | 🚶 ${distText}`);
+    } else if (this.accuracy <= 45) {
+      this.setStatus('searching', `GPS (±${Math.round(this.accuracy)}m) | 🚶 ${distText}`);
+    } else {
+      this.setStatus('searching', `Signal schwach (±${Math.round(this.accuracy)}m) | 🚶 ${distText}`);
+    }
 
     const now = performance.now();
 
-    // Dynamische Schwelle basierend auf GPS-Genauigkeit (mind. 3.5m)
-    const effectiveThreshold = Math.max(this.stepThresholdMeters, this.accuracy * 0.28);
+    // Schritt auslösen wenn:
+    // a) Echte gegangene Distanz >= 2.0m (oder 2 Beschleunigungsschritte bei mind. 1.2m Distanz)
+    // b) Genauigkeit akzeptabel (<= 45m)
+    // c) Keine extreme Teleportation (> 50m)
+    // d) Cooldown abgelaufen (mind. 1000ms)
+    const thresholdReached = (distFromOrigin >= this.stepThresholdMeters) || 
+                             (this.motionStepsCount >= 2 && distFromOrigin >= 1.2);
 
-    // Schritt auslösen nur wenn:
-    // a) Echte geglättete Distanz >= 3.5m
-    // b) Nicht stationär laut GPS-Chip
-    // c) Keine irreale Teleportation (> 40m)
-    // d) Akzeptable GPS-Genauigkeit (<= 25m)
-    // e) Cooldown abgelaufen (mind. 1200ms)
-    // f) Kein Rücksprung auf vorherige Position (Bounce-Back Schutz)
     if (
-      distFromOrigin >= effectiveThreshold &&
-      distFromOrigin < 40 &&
-      this.accuracy <= 25 &&
-      !isStationaryBySpeed
+      thresholdReached &&
+      distFromOrigin < 50 &&
+      this.accuracy <= 45 &&
+      (now - this.lastStepTime >= this.stepCooldownMs)
     ) {
-      // Bounce-Back Check: Wenn die Position nahe am vorherigen Schritt liegt, ist es Jitter
-      let isBounceBack = false;
-      if (this.prevStepCoord) {
-        const distToPrev = this.haversineMeters(
-          this.prevStepCoord.lat,
-          this.prevStepCoord.lon,
-          currentLat,
-          currentLon
-        );
-        if (distToPrev < 2.0) {
-          isBounceBack = true;
-        }
-      }
-
-      if (!isBounceBack && (now - this.lastStepTime >= this.stepCooldownMs)) {
-        this.lastStepTime = now;
-        const originCoord = { ...this.stepOriginCoord };
-        this.prevStepCoord = { ...this.stepOriginCoord };
-        this.stepOriginCoord = { lat: currentLat, lon: currentLon };
-
-        // Berechne die reale Himmelsrichtung des gelaufenen Schritts (Norden=up, Osten=right, etc.)
-        let walkDirection = null;
-        if (originCoord) {
-          const bearing = this.calculateBearing(
-            originCoord.lat,
-            originCoord.lon,
-            currentLat,
-            currentLon
-          );
-          if (bearing >= 315 || bearing < 45) walkDirection = 'up';
-          else if (bearing >= 45 && bearing < 135) walkDirection = 'right';
-          else if (bearing >= 135 && bearing < 225) walkDirection = 'down';
-          else if (bearing >= 225 && bearing < 315) walkDirection = 'left';
-        }
-
-        this.triggerHaptic(45);
-        if (this.onStepTriggered) {
-          this.onStepTriggered(walkDirection);
-        }
-      }
-    } else if (distFromOrigin >= 40) {
-      // Satelliten-Sprung abgefangen: Ausgangspunkt neu kalibrieren ohne Schritt
+      this.lastStepTime = now;
+      this.motionStepsCount = 0;
+      const originCoord = { ...this.stepOriginCoord };
+      this.prevStepCoord = { ...this.stepOriginCoord };
       this.stepOriginCoord = { lat: currentLat, lon: currentLon };
+
+      // Berechne die reale Himmelsrichtung des gelaufenen Schritts
+      // 0° = Norden, 90° = Osten, 180° = Süden, 270° = Westen
+      const bearing = this.calculateBearing(
+        originCoord.lat,
+        originCoord.lon,
+        currentLat,
+        currentLon
+      );
+
+      this.triggerHaptic(50);
+      if (this.onStepTriggered) {
+        this.onStepTriggered(bearing, distFromOrigin);
+      }
+    } else if (distFromOrigin >= 50) {
+      // Satelliten-Sprung abgefangen: Ausgangspunkt neu kalibrieren
+      this.stepOriginCoord = { lat: currentLat, lon: currentLon };
+      this.motionStepsCount = 0;
     }
 
     if (this.onLocationUpdate) {
-      this.onLocationUpdate(pos);
+      this.onLocationUpdate(pos, distFromOrigin);
     }
   }
 
-  // Setzt den Referenzpunkt zurück (z.B. nach manueller Drehung, Schritt oder Level-Start)
+  // Setzt den Referenzpunkt zurück ("Hier verankern")
   resetStepOrigin() {
-    if (this.filteredLat !== null) {
-      this.stepOriginCoord = {
-        lat: this.filteredLat,
-        lon: this.filteredLon
-      };
-    } else if (this.lastPosition) {
+    if (this.lastPosition) {
       this.stepOriginCoord = {
         lat: this.lastPosition.coords.latitude,
         lon: this.lastPosition.coords.longitude
@@ -1107,6 +1079,8 @@ class GpsEngine {
     } else {
       this.stepOriginCoord = null;
     }
+    this.currentWalkDistance = 0;
+    this.motionStepsCount = 0;
   }
 
   // Haversine-Distanz zwischen zwei WGS84-Koordinaten in Metern
@@ -1133,14 +1107,22 @@ class GpsEngine {
     return (θ * 180 / Math.PI + 360) % 360;
   }
 
-  triggerStep(walkDirection = null) {
+  // Manuelles Auslösen (für Tests)
+  triggerStep(walkDirectionOrBearing = null) {
     const now = performance.now();
     if (now - this.lastStepTime < this.stepCooldownMs) return;
     this.lastStepTime = now;
 
     this.triggerHaptic(45);
     if (this.onStepTriggered) {
-      this.onStepTriggered(walkDirection);
+      let bearing = null;
+      if (typeof walkDirectionOrBearing === 'string') {
+        const map = { up: 0, right: 90, down: 180, left: 270 };
+        bearing = map[walkDirectionOrBearing] !== undefined ? map[walkDirectionOrBearing] : null;
+      } else if (typeof walkDirectionOrBearing === 'number') {
+        bearing = walkDirectionOrBearing;
+      }
+      this.onStepTriggered(bearing, this.stepThresholdMeters);
     }
   }
 
@@ -1158,7 +1140,7 @@ class GpsEngine {
 
   handleError(err) {
     if (err.code === 1) {
-      this.setStatus('denied', 'GPS verweigert');
+      this.setStatus('denied', 'GPS Zugriff verweigert');
     } else {
       this.setStatus('searching', 'GPS sucht Signal...');
     }
@@ -2511,7 +2493,7 @@ class SokobanApp {
           this.lastManualTurnTime = performance.now();
           this.audio.playStep();
           this.updateHudStats();
-        } else {
+        } else if (this.isReviewerMode) {
           this.executeMove(targetGrid);
         }
       });
@@ -2528,7 +2510,7 @@ class SokobanApp {
           this.lastManualTurnTime = performance.now();
           this.audio.playStep();
           this.updateHudStats();
-        } else {
+        } else if (this.isReviewerMode) {
           this.executeMove(targetGrid);
         }
       });
@@ -2536,8 +2518,16 @@ class SokobanApp {
 
     if (this.btnStepForward) {
       this.btnStepForward.addEventListener('click', () => {
-        if (this.engine && this.engine.player) {
-          this.executeMove(this.engine.player.facing);
+        if (this.isReviewerMode) {
+          // Im Reviewer-Modus: Schritt vorwärts ausführen
+          if (this.engine && this.engine.player) {
+            this.executeMove(this.engine.player.facing);
+          }
+        } else {
+          // Im normalen Outdoor-Modus: GPS-Referenzpunkt "Hier verankern"
+          this.gps.resetStepOrigin();
+          this.audio.playStep();
+          this.showMessageToast('🎯 GPS-Startpunkt hier verankert! Laufe in eine Richtung los.');
         }
       });
     }
@@ -2546,55 +2536,60 @@ class SokobanApp {
       this.btnRotateField.addEventListener('click', () => this.rotateField());
     }
 
-    // D-Pad Toggle Button
-    const btnToggleDpad = document.getElementById('btn-toggle-dpad');
-    if (btnToggleDpad) {
-      btnToggleDpad.addEventListener('click', () => {
-        if (this.touchDpadContainer) {
-          const isHidden = this.touchDpadContainer.style.display === 'none' || !this.touchDpadContainer.style.display;
-          this.touchDpadContainer.style.display = isHidden ? 'flex' : 'none';
-          btnToggleDpad.classList.toggle('active', isHidden);
-        }
-      });
-    }
-
-    // Direktes Antippen des Spielfelds (1-Klick: Drehen & Laufen / Schieben)
+    // Direktes Antippen des Spielfelds (Im Outdoor-Modus: Blick drehen | Im Reviewer-Modus: Bewegen)
     if (this.canvas) {
       this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
     }
 
-    // Tastatursteuerung (Intuitive Steuerung auf Desktop/Laptop: Bewegen & Kistenschieben!)
+    // Tastatursteuerung: WASD / Pfeiltasten sind NUR im Reviewer-/Entwicklermodus aktiv!
     window.addEventListener('keydown', (e) => {
       if (this.currentScreen !== 'game' || !this.engine || !this.engine.player) return;
 
       const key = e.key.toLowerCase();
-      if (key === 'arrowup' || key === 'w') {
-        e.preventDefault();
-        this.executeMove(this.screenDirToGrid('up'));
-      } else if (key === 'arrowdown' || key === 's') {
-        e.preventDefault();
-        this.executeMove(this.screenDirToGrid('down'));
-      } else if (key === 'arrowleft' || key === 'a') {
-        e.preventDefault();
-        this.executeMove(this.screenDirToGrid('left'));
-      } else if (key === 'arrowright' || key === 'd') {
-        e.preventDefault();
-        this.executeMove(this.screenDirToGrid('right'));
-      } else if (key === ' ' || key === 'spacebar' || key === 'enter') {
-        e.preventDefault();
-        this.executeMove(this.engine.player.facing);
-      } else if (key === 'q') {
-        e.preventDefault();
-        this.turnPlayerRelative(true);
-      } else if (key === 'e') {
-        e.preventDefault();
-        this.turnPlayerRelative(false);
-      } else if (key === 'z') {
+
+      // Undo & Reset funktionieren immer
+      if (key === 'z') {
         e.preventDefault();
         this.handleUndo();
+        return;
       } else if (key === 'r') {
         e.preventDefault();
         this.handleReset();
+        return;
+      }
+
+      const isMoveKey = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd', ' ', 'spacebar', 'enter', 'q', 'e'].includes(key);
+      if (isMoveKey) {
+        if (!this.isReviewerMode) {
+          // Im normalen Outdoor-Modus: Tastatur ist gesperrt!
+          e.preventDefault();
+          this.showMessageToast('🚶 Outdoor-Modus aktiv: Bewege dich im echten Leben, um die Figur zu steuern!');
+          return;
+        }
+
+        // --- ENTWICKLER- / REVIEWER-MODUS ---
+        if (key === 'arrowup' || key === 'w') {
+          e.preventDefault();
+          this.executeMove(this.screenDirToGrid('up'));
+        } else if (key === 'arrowdown' || key === 's') {
+          e.preventDefault();
+          this.executeMove(this.screenDirToGrid('down'));
+        } else if (key === 'arrowleft' || key === 'a') {
+          e.preventDefault();
+          this.executeMove(this.screenDirToGrid('left'));
+        } else if (key === 'arrowright' || key === 'd') {
+          e.preventDefault();
+          this.executeMove(this.screenDirToGrid('right'));
+        } else if (key === ' ' || key === 'spacebar' || key === 'enter') {
+          e.preventDefault();
+          this.executeMove(this.engine.player.facing);
+        } else if (key === 'q') {
+          e.preventDefault();
+          this.turnPlayerRelative(true);
+        } else if (key === 'e') {
+          e.preventDefault();
+          this.turnPlayerRelative(false);
+        }
       }
     });
 
@@ -2610,11 +2605,11 @@ class SokobanApp {
       el.addEventListener('click', handler);
     };
 
-    bindTouch('btn-touch-up', () => this.executeMove(this.screenDirToGrid('up')));
-    bindTouch('btn-touch-down', () => this.executeMove(this.screenDirToGrid('down')));
-    bindTouch('btn-touch-left', () => this.executeMove(this.screenDirToGrid('left')));
-    bindTouch('btn-touch-right', () => this.executeMove(this.screenDirToGrid('right')));
-    bindTouch('btn-touch-center', () => this.executeMove(this.engine.player.facing));
+    bindTouch('btn-touch-up', () => { if (this.isReviewerMode) this.executeMove(this.screenDirToGrid('up')); });
+    bindTouch('btn-touch-down', () => { if (this.isReviewerMode) this.executeMove(this.screenDirToGrid('down')); });
+    bindTouch('btn-touch-left', () => { if (this.isReviewerMode) this.executeMove(this.screenDirToGrid('left')); });
+    bindTouch('btn-touch-right', () => { if (this.isReviewerMode) this.executeMove(this.screenDirToGrid('right')); });
+    bindTouch('btn-touch-center', () => { if (this.isReviewerMode) this.executeMove(this.engine.player.facing); });
     bindTouch('btn-touch-undo', () => this.handleUndo());
     bindTouch('btn-touch-reset', () => this.handleReset());
 
@@ -2724,13 +2719,30 @@ class SokobanApp {
     return dirs[gIdx];
   }
 
+  // Mappt GPS-Himmelsrichtung (Peilung 0°-360°) unter Felddrehung auf interne Gitter-Richtung ('up', 'right', 'down', 'left')
+  bearingToGridDir(bearing) {
+    if (typeof bearing === 'string') {
+      return this.screenDirToGrid(bearing);
+    }
+    if (typeof bearing !== 'number' || isNaN(bearing)) {
+      return this.engine && this.engine.player ? this.engine.player.facing : 'up';
+    }
+    const fieldRot = this.renderer ? this.renderer.rotation : 0;
+    const relAngle = (bearing - fieldRot + 360) % 360;
+    if (relAngle >= 45 && relAngle < 135) return 'right';
+    if (relAngle >= 135 && relAngle < 225) return 'down';
+    if (relAngle >= 225 && relAngle < 315) return 'left';
+    return 'up';
+  }
+
   // GPS & Bewegungssensor Callbacks
   setupGpsCallbacks() {
-    this.gps.onStepTriggered = (walkDirection) => {
+    this.gps.onStepTriggered = (bearing, distance) => {
       if (this.currentScreen === 'game' && this.engine && this.engine.player) {
-        // Echter Schritt im Freien per GPS: Wenn Himmelsrichtung erkannt, laufe dorthin!
-        // Ansonsten laufe in die aktuelle Blickrichtung der Figur.
-        const targetDir = walkDirection ? this.screenDirToGrid(walkDirection) : this.engine.player.facing;
+        // Echter Schritt im Freien per GPS: Richtung aus GPS-Peilung & Spielfeld-Ausrichtung ermitteln
+        const targetDir = this.bearingToGridDir(bearing);
+        const dirNames = { up: 'NORD', right: 'OST', down: 'SÜD', left: 'WEST' };
+        this.showMessageToast(`🚶 Schritt erkannt: ${dirNames[targetDir] || targetDir} (${(distance || 0).toFixed(1)}m)`);
         this.executeMove(targetDir);
       }
     };
@@ -2740,7 +2752,7 @@ class SokobanApp {
         this.gpsPill.className = `pill pill-gps ${status}`;
       }
       if (this.gpsPillText) {
-        this.gpsPillText.textContent = status === 'locked' ? 'GPS aktiv' : (status === 'searching' ? 'GPS sucht...' : 'GPS bereit');
+        this.gpsPillText.textContent = msg || (status === 'locked' ? 'GPS aktiv' : (status === 'searching' ? 'GPS sucht...' : 'GPS bereit'));
       }
     };
   }
@@ -2895,8 +2907,22 @@ class SokobanApp {
     }
 
     if (targetDir) {
-      // 1-Click: Drehen & sofort Laufen / Schieben
-      this.executeMove(this.screenDirToGrid(targetDir));
+      const gridDir = this.screenDirToGrid(targetDir);
+      if (this.isReviewerMode) {
+        // Im Reviewer-Modus: Schritt & Kiste schieben
+        this.executeMove(gridDir);
+      } else {
+        // Im normalen Outdoor-Modus: Nur Blick & Laterne drehen (keine Bewegung ohne echte Schritte!)
+        if (this.engine.player.facing !== gridDir) {
+          this.engine.player.facing = gridDir;
+          if (this.renderer && this.renderer.playerAnim) {
+            this.renderer.playerAnim.facing = gridDir;
+          }
+          this.lastManualTurnTime = performance.now();
+          this.audio.playStep();
+          this.updateHudStats();
+        }
+      }
     }
   }
 
@@ -3143,11 +3169,20 @@ class SokobanApp {
   // Aktiviert den Reviewer-Modus (Tastatur & Touch-D-Pad)
   activateReviewerMode() {
     this.isReviewerMode = true;
-    this.touchDpadContainer.style.display = 'flex';
-    this.reviewerBanner.style.display = 'block';
-    setTimeout(() => {
-      this.reviewerBanner.style.display = 'none';
-    }, 4000);
+    if (this.touchDpadContainer) {
+      this.touchDpadContainer.style.display = 'flex';
+    }
+    if (this.reviewerBanner) {
+      this.reviewerBanner.style.display = 'block';
+      setTimeout(() => {
+        this.reviewerBanner.style.display = 'none';
+      }, 4000);
+    }
+
+    const stepBtnIcon = document.getElementById('step-btn-icon');
+    const stepBtnLabel = document.getElementById('step-btn-label');
+    if (stepBtnIcon) stepBtnIcon.textContent = '🚶';
+    if (stepBtnLabel) stepBtnLabel.textContent = 'Vorwärts';
 
     const modeTag = document.getElementById('gps-mode-tag');
     if (modeTag) {

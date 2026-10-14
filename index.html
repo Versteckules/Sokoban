@@ -151,9 +151,6 @@
           </div>
 
           <div class="hud-actions">
-            <button id="btn-toggle-dpad" class="btn-sm btn-action" title="D-Pad Tasten anzeigen / verbergen">
-              <span>🕹️ D-Pad</span>
-            </button>
             <button id="btn-undo" class="btn-sm btn-action" title="Zug rückgängig (Z)">
               <span>↩ Undo</span>
             </button>
@@ -170,15 +167,15 @@
 
         <!-- SPIEL-STEUERUNG (SCHLANK & INTUITIV) -->
         <div class="game-control-bar" id="game-control-bar">
-          <button id="btn-turn-left" class="btn-ctrl btn-turn" title="Figur nach links drehen / schieben (◀)">
+          <button id="btn-turn-left" class="btn-ctrl btn-turn" title="Blick nach links drehen (◀)">
             <span class="ctrl-icon">◀</span>
             <span class="ctrl-label">Links</span>
           </button>
-          <button id="btn-step-forward" class="btn-ctrl btn-step btn-primary btn-glow" title="Einen Schritt in Blickrichtung laufen / schieben (🚶)">
-            <span class="ctrl-icon">🚶</span>
-            <span class="ctrl-label">Vorwärts</span>
+          <button id="btn-step-forward" class="btn-ctrl btn-step btn-primary btn-glow" title="Startpunkt hier auf deine GPS-Position verankern (🎯)">
+            <span class="ctrl-icon" id="step-btn-icon">🎯</span>
+            <span class="ctrl-label" id="step-btn-label">Hier verankern</span>
           </button>
-          <button id="btn-turn-right" class="btn-ctrl btn-turn" title="Figur nach rechts drehen / schieben (▶)">
+          <button id="btn-turn-right" class="btn-ctrl btn-turn" title="Blick nach rechts drehen (▶)">
             <span class="ctrl-icon">▶</span>
             <span class="ctrl-label">Rechts</span>
           </button>

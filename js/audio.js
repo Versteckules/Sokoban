@@ -36,14 +36,11 @@ export class AudioManager {
   initMusic() {
     this.musicElement = new Audio('assets/music.mp3');
     this.musicElement.loop = true;
-    this.musicElement.volume = 0.45;
+    this.musicElement.volume = 0.40;
 
-    // Fallback: Wenn assets/music.mp3 nicht gefunden wird (404), starte Ambient-Synthesizer
+    // Falls keine eigene assets/music.mp3 existiert, bleibt der Hintergrund ruhig (kein nerviges Synthesizer-Brummen)
     this.musicElement.addEventListener('error', () => {
-      console.info('assets/music.mp3 nicht geladen – aktiviere stimmungsvollen Ambient-Synthesizer.');
-      if (this.isMusicPlaying && !this.isMuted) {
-        this.startAmbientDrone();
-      }
+      // Ruhiger Hintergrund, nur Soundeffekte aktiv
     });
   }
 
@@ -55,11 +52,9 @@ export class AudioManager {
       const playPromise = this.musicElement.play();
       if (playPromise !== undefined) {
         playPromise.catch(() => {
-          this.startAmbientDrone();
+          // Keine Musikdatei vorhanden oder Autoplay blockiert: Ruhig bleiben
         });
       }
-    } else {
-      this.startAmbientDrone();
     }
   }
 
@@ -68,55 +63,26 @@ export class AudioManager {
     if (this.musicElement) {
       this.musicElement.pause();
     }
-    this.stopAmbientDrone();
   }
 
   toggleMute() {
     this.isMuted = !this.isMuted;
     if (this.isMuted) {
       if (this.musicElement) this.musicElement.pause();
-      this.stopAmbientDrone();
     } else {
-      if (this.isMusicPlaying) {
-        this.startMusic();
+      if (this.isMusicPlaying && this.musicElement) {
+        this.musicElement.play().catch(() => {});
       }
     }
     return this.isMuted;
   }
 
-  // Synthetisiert einen tiefen, mystischen Ambient-Drone (Pyramiden-Stimmung)
   startAmbientDrone() {
-    if (!this.ctx || this.isMuted || this.ambientOscillators.length > 0) return;
-    try {
-      const baseFreqs = [55, 82.5, 110]; // A1, E2, A2
-      baseFreqs.forEach((freq, idx) => {
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = idx === 0 ? 'sine' : 'triangle';
-        osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
-
-        gain.gain.setValueAtTime(0.001, this.ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.04 / (idx + 1), this.ctx.currentTime + 3);
-
-        osc.connect(gain);
-        gain.connect(this.ctx.destination);
-        osc.start();
-        this.ambientOscillators.push({ osc, gain });
-      });
-    } catch (e) {
-      console.warn('Ambient Drone Fehler:', e);
-    }
+    // Deaktiviert: Kein nerviges 55Hz Synthesizer-Brummen
   }
 
   stopAmbientDrone() {
-    if (!this.ctx || this.ambientOscillators.length === 0) return;
-    this.ambientOscillators.forEach(({ osc, gain }) => {
-      try {
-        gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.5);
-        setTimeout(() => osc.stop(), 500);
-      } catch (e) {}
-    });
-    this.ambientOscillators = [];
+    // Deaktiviert
   }
 
   // Soundeffekt: Leiser Schritt auf Steinplatten
