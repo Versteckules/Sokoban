@@ -23,6 +23,9 @@ class SokobanApp {
     this.creatorTapTimer = null;
     this.lastManualTurnTime = 0;
     this.lastCompassHeading = null;
+    this.hasActiveCompass = false;
+    this.lastCompassTime = 0;
+    this.orientationHandler = null;
 
     // DOM-Referenzen
     this.screens = {
@@ -102,6 +105,7 @@ class SokobanApp {
     document.getElementById('btn-enter-pyramid').addEventListener('click', () => {
       this.audio.init();
       this.audio.startMusic();
+      this.requestSensorPermissions();
       this.showScreen('pyramid');
     });
 
@@ -190,40 +194,21 @@ class SokobanApp {
     // SPIELSTEUERUNG (Buttons unter dem Spielfeld)
     if (this.btnTurnLeft) {
       this.btnTurnLeft.addEventListener('click', () => {
-        const targetGrid = this.screenDirToGrid('left');
-        if (this.engine.player.facing !== targetGrid) {
-          this.engine.player.facing = targetGrid;
-          if (this.renderer && this.renderer.playerAnim) {
-            this.renderer.playerAnim.facing = targetGrid;
-          }
-          this.lastManualTurnTime = performance.now();
-          this.audio.playStep();
-          this.updateHudStats();
-        } else if (this.isReviewerMode) {
-          this.executeMove(targetGrid);
-        }
+        this.requestSensorPermissions();
+        this.turnPlayerRelative(true); // 90° nach links drehen
       });
     }
 
     if (this.btnTurnRight) {
       this.btnTurnRight.addEventListener('click', () => {
-        const targetGrid = this.screenDirToGrid('right');
-        if (this.engine.player.facing !== targetGrid) {
-          this.engine.player.facing = targetGrid;
-          if (this.renderer && this.renderer.playerAnim) {
-            this.renderer.playerAnim.facing = targetGrid;
-          }
-          this.lastManualTurnTime = performance.now();
-          this.audio.playStep();
-          this.updateHudStats();
-        } else if (this.isReviewerMode) {
-          this.executeMove(targetGrid);
-        }
+        this.requestSensorPermissions();
+        this.turnPlayerRelative(false); // 90° nach rechts drehen
       });
     }
 
     if (this.btnStepForward) {
       this.btnStepForward.addEventListener('click', () => {
+        this.requestSensorPermissions();
         if (this.isReviewerMode) {
           // Im Reviewer-Modus: Schritt vorwärts ausführen
           if (this.engine && this.engine.player) {
@@ -233,7 +218,7 @@ class SokobanApp {
           // Im normalen Outdoor-Modus: GPS-Referenzpunkt "Hier verankern"
           this.gps.resetStepOrigin();
           this.audio.playStep();
-          this.showMessageToast('🎯 GPS-Startpunkt hier verankert! Laufe in eine Richtung los.');
+          this.showMessageToast('🎯 GPS-Startpunkt hier verankert! Laufe in Blickrichtung los.');
         }
       });
     }
@@ -353,7 +338,7 @@ class SokobanApp {
     });
 
     // Reale Smartphone-Kompass-Erkennung (Drehung im Freien)
-    const handleOrientation = (e) => {
+    this.orientationHandler = (e) => {
       if (this.currentScreen !== 'game' || !this.engine || !this.engine.player) return;
 
       // Wenn der Spieler vor weniger als 2.2 Sekunden manuell gedreht hat: Kompass pausieren
@@ -369,8 +354,11 @@ class SokobanApp {
 
       if (heading === null || isNaN(heading)) return;
 
-      // Zitter-Filter: Micro-Bewegungen unter 2.5 Grad dämpfen
-      if (this.lastCompassHeading !== null && Math.abs(heading - this.lastCompassHeading) < 2.5) {
+      this.hasActiveCompass = true;
+      this.lastCompassTime = now;
+
+      // Zitter-Filter: Micro-Bewegungen unter 2.0 Grad dämpfen
+      if (this.lastCompassHeading !== null && Math.abs(heading - this.lastCompassHeading) < 2.0) {
         return;
       }
       this.lastCompassHeading = heading;
@@ -385,6 +373,9 @@ class SokobanApp {
         if (this.renderer && this.renderer.playerAnim) {
           this.renderer.playerAnim.facing = newFacing;
         }
+        if (this.gps) {
+          this.gps.onDirectionChanged(newFacing);
+        }
       }
 
       if (this.renderer) {
@@ -392,24 +383,31 @@ class SokobanApp {
       }
     };
 
-    window.addEventListener('deviceorientation', handleOrientation, true);
-    window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-
-    // iOS Safari Kompass-Berechtigung auf Nutzer-Geste
-    const requestCompassPermission = () => {
-      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        DeviceOrientationEvent.requestPermission().then(res => {
-          if (res === 'granted') {
-            window.addEventListener('deviceorientation', handleOrientation, true);
-          }
-        }).catch(() => {});
-      }
-    };
+    window.addEventListener('deviceorientation', this.orientationHandler, true);
+    window.addEventListener('deviceorientationabsolute', this.orientationHandler, true);
 
     const enterBtn = document.getElementById('btn-enter-pyramid');
-    if (enterBtn) enterBtn.addEventListener('click', requestCompassPermission, { once: true });
+    if (enterBtn) enterBtn.addEventListener('click', () => this.requestSensorPermissions(), { once: true });
     if (this.canvas) {
-      this.canvas.addEventListener('touchstart', requestCompassPermission, { once: true });
+      this.canvas.addEventListener('touchstart', () => this.requestSensorPermissions(), { once: true, passive: true });
+    }
+  }
+
+  // Fragt Sensor-Berechtigungen (iOS Safari) für Kompass und Pedometer-Beschleunigungsmesser ab
+  requestSensorPermissions() {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().then(res => {
+        if (res === 'granted' && this.orientationHandler) {
+          window.addEventListener('deviceorientation', this.orientationHandler, true);
+        }
+      }).catch(() => {});
+    }
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      DeviceMotionEvent.requestPermission().then(res => {
+        if (res === 'granted' && this.gps) {
+          this.gps.startMotionStepSensor();
+        }
+      }).catch(() => {});
     }
   }
 
@@ -445,10 +443,19 @@ class SokobanApp {
   setupGpsCallbacks() {
     this.gps.onStepTriggered = (bearing, distance) => {
       if (this.currentScreen === 'game' && this.engine && this.engine.player) {
-        // Echter Schritt im Freien per GPS: Richtung aus GPS-Peilung & Spielfeld-Ausrichtung ermitteln
-        const targetDir = this.bearingToGridDir(bearing);
+        // Echter Schritt im Freien per Sensor-Fusion (Pedometer + GPS):
+        // Standard & Primär: Die aktuelle Blickrichtung des Spielers (Kompass & Tasten)
+        let targetDir = this.engine.player.facing;
+
+        // Falls kein aktiver Kompass läuft und eine signifikante GPS-Peilung vorliegt:
+        const hasCompass = this.hasActiveCompass && (performance.now() - (this.lastCompassTime || 0) < 4000);
+        if (!hasCompass && bearing !== null && bearing !== undefined) {
+          const gpsDir = this.bearingToGridDir(bearing);
+          if (gpsDir) targetDir = gpsDir;
+        }
+
         const dirNames = { up: 'NORD', right: 'OST', down: 'SÜD', left: 'WEST' };
-        this.showMessageToast(`🚶 Schritt erkannt: ${dirNames[targetDir] || targetDir} (${(distance || 0).toFixed(1)}m)`);
+        this.showMessageToast(`🚶 Schritt ausgeführt: ${dirNames[targetDir] || targetDir}`);
         this.executeMove(targetDir);
       }
     };
@@ -465,34 +472,37 @@ class SokobanApp {
 
   // Mappt einen kontinuierlichen Kompass-Winkel auf 4 Quadranten mit Hysterese-Puffer gegen Flackern
   angleToDirection(angle, currentFacing) {
-    const h = 8; // 8 Grad Hysterese gegen Flackern an den Quadranten-Grenzen
+    const h = 12; // 12 Grad Hysterese-Puffer gegen Flackern an den Quadranten-Grenzen
+    const norm = (angle + 360) % 360;
+
     if (currentFacing === 'up') {
-      if (angle >= 45 + h && angle < 135 - h) return 'right';
-      if (angle >= 135 - h && angle < 225 + h) return 'down';
-      if (angle >= 225 + h && angle < 315 - h) return 'left';
-      return 'up';
-    }
-    if (currentFacing === 'right') {
-      if (angle >= 135 + h && angle < 225 - h) return 'down';
-      if (angle >= 225 - h && angle < 315 + h) return 'left';
-      if (angle >= 315 + h || angle < 45 - h) return 'up';
-      return 'right';
-    }
-    if (currentFacing === 'down') {
-      if (angle >= 225 + h && angle < 315 - h) return 'left';
-      if (angle >= 315 - h || angle < 45 + h) return 'up';
-      if (angle >= 45 + h && angle < 135 - h) return 'right';
-      return 'down';
-    }
-    if (currentFacing === 'left') {
-      if (angle >= 315 + h || angle < 45 - h) return 'up';
-      if (angle >= 45 - h && angle < 135 + h) return 'right';
-      if (angle >= 135 + h && angle < 225 - h) return 'down';
+      if (norm < 45 + h || norm > 315 - h) return 'up';
+      if (norm >= 45 + h && norm < 135) return 'right';
+      if (norm >= 135 && norm < 225) return 'down';
       return 'left';
     }
-    if (angle >= 45 && angle < 135) return 'right';
-    if (angle >= 135 && angle < 225) return 'down';
-    if (angle >= 225 && angle < 315) return 'left';
+    if (currentFacing === 'right') {
+      if (norm >= 45 - h && norm < 135 + h) return 'right';
+      if (norm >= 135 + h && norm < 225) return 'down';
+      if (norm >= 225 && norm < 315) return 'left';
+      return 'up';
+    }
+    if (currentFacing === 'down') {
+      if (norm >= 135 - h && norm < 225 + h) return 'down';
+      if (norm >= 225 + h && norm < 315) return 'left';
+      if (norm >= 315 || norm < 45) return 'up';
+      return 'right';
+    }
+    if (currentFacing === 'left') {
+      if (norm >= 225 - h && norm < 315 + h) return 'left';
+      if (norm >= 315 + h || norm < 45) return 'up';
+      if (norm >= 45 && norm < 135) return 'right';
+      return 'down';
+    }
+
+    if (norm >= 45 && norm < 135) return 'right';
+    if (norm >= 135 && norm < 225) return 'down';
+    if (norm >= 225 && norm < 315) return 'left';
     return 'up';
   }
 
@@ -509,28 +519,11 @@ class SokobanApp {
       this.lastManualTurnTime = performance.now();
       this.audio.playStep();
       this.updateHudStats();
+      if (this.gps) this.gps.onDirectionChanged(targetFacing);
       return;
     }
 
-    const cur = this.engine.player.facing;
-    let newFacing = cur;
-    if (direction === false) { // Rechts
-      if (cur === 'down' || cur === 'up') newFacing = 'right';
-      else if (cur === 'right') newFacing = 'down';
-      else if (cur === 'left') newFacing = 'up';
-    } else { // Links
-      if (cur === 'down' || cur === 'up') newFacing = 'left';
-      else if (cur === 'left') newFacing = 'down';
-      else if (cur === 'right') newFacing = 'up';
-    }
-
-    this.engine.player.facing = newFacing;
-    if (this.renderer && this.renderer.playerAnim) {
-      this.renderer.playerAnim.facing = newFacing;
-    }
-    this.lastManualTurnTime = performance.now();
-    this.audio.playStep();
-    this.updateHudStats();
+    this.turnPlayerRelative(!direction);
   }
 
   // Dreht die Figur relativ um 90°
@@ -547,6 +540,9 @@ class SokobanApp {
     this.lastManualTurnTime = performance.now();
     this.audio.playStep();
     this.updateHudStats();
+    if (this.gps) {
+      this.gps.onDirectionChanged(newFacing);
+    }
   }
 
   // Dreht die Figur um 180° um
@@ -563,6 +559,9 @@ class SokobanApp {
     this.lastManualTurnTime = performance.now();
     this.audio.playStep();
     this.updateHudStats();
+    if (this.gps) {
+      this.gps.onDirectionChanged(newFacing);
+    }
   }
 
   // Rotiert das gesamte Spielfeld um die Figur um 90°
@@ -578,8 +577,11 @@ class SokobanApp {
     if (this.lastCompassHeading !== null && this.engine && this.engine.player) {
       const gridAngle = (this.lastCompassHeading - nextAngle + 360) % 360;
       const newFacing = this.angleToDirection(gridAngle, this.engine.player.facing);
-      this.engine.player.facing = newFacing;
-      if (this.renderer.playerAnim) this.renderer.playerAnim.facing = newFacing;
+      if (newFacing !== this.engine.player.facing) {
+        this.engine.player.facing = newFacing;
+        if (this.renderer.playerAnim) this.renderer.playerAnim.facing = newFacing;
+        if (this.gps) this.gps.onDirectionChanged(newFacing);
+      }
       this.renderer.setCompassHeadingAngle(gridAngle);
     }
 
@@ -627,6 +629,9 @@ class SokobanApp {
           this.lastManualTurnTime = performance.now();
           this.audio.playStep();
           this.updateHudStats();
+          if (this.gps) {
+            this.gps.onDirectionChanged(gridDir);
+          }
         }
       }
     }
@@ -709,6 +714,11 @@ class SokobanApp {
       // Kollision gegen Wand oder blockierte Kiste
       this.audio.playBump();
       this.gps.triggerCollisionHaptic();
+      if (res.reason === 'wall') {
+        this.showMessageToast('🧱 Wand im Weg! Drehe dich mit Links/Rechts');
+      } else if (res.reason === 'blocked_box') {
+        this.showMessageToast('📦 Kiste blockiert! Kann nicht geschoben werden');
+      }
     }
 
     this.updateHudStats();

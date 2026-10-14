@@ -860,7 +860,7 @@ class AudioManager {
 
 // --- Source: gps.js ---
 // GPS OUTDOOR ENGINE (Geocaching Edition)
-// Erkennt echte Fortbewegung im Freien ohne Geister-Schritte
+// Erkennt echte Fortbewegung im Freien ohne Geister-Schritte & reagiert direkt auf Richtungswechsel
 // Ersteller: versteckules
 
 class GpsEngine {
@@ -871,25 +871,34 @@ class GpsEngine {
     this.status = 'idle'; // 'idle', 'searching', 'locked', 'denied', 'error'
     this.accuracy = 999;
     this.lastPosition = null;
+    this.lastGpsTimestamp = 0;
 
     // Referenzpunkt für Schritt-Erkennung
     this.stepOriginCoord = null;
     this.prevStepCoord = null;
+    this.lastCoord = null;
 
-    // Live-Distanz zum aktuellen Schritt
+    // Distanz-Tracking
     this.currentWalkDistance = 0;
+    this.accumulatedDistance = 0;
 
-    // Schritt-Schwelle: 2.0 Meter echte Ortsveränderung (ca. 2.5 bis 3 Schritte im Freien)
-    this.stepThresholdMeters = options.stepThreshold || 2.0;
+    // Schritt-Schwelle: 1.8 Meter echte Ortsveränderung oder 3 echte Pedometer-Schritte
+    this.stepThresholdMeters = options.stepThreshold || 1.8;
+    this.targetMotionSteps = options.targetMotionSteps || 3;
 
-    // Cooldown gegen Doppelschritte (mindestens 1000ms)
+    // Cooldown gegen Doppelschritte (750ms für geschmeidige Reaktion)
     this.lastStepTime = -10000;
-    this.stepCooldownMs = 1000;
+    this.stepCooldownMs = 750;
 
     // Schrittzähler über Pedometer / Accelerometer (DeviceMotion)
     this.motionStepsCount = 0;
     this.lastMotionPeakTime = 0;
     this.isMotionListening = false;
+    this.motionHandler = null;
+    this.gravityFilter = 9.81;
+
+    // Letzte bekannte Himmelsrichtung
+    this.currentFacing = 'up';
 
     // Callbacks
     this.onLocationUpdate = null;
@@ -907,8 +916,10 @@ class GpsEngine {
     if (this.isTracking) return true;
     this.isTracking = true;
     this.stepOriginCoord = null;
+    this.lastCoord = null;
     this.prevStepCoord = null;
     this.currentWalkDistance = 0;
+    this.accumulatedDistance = 0;
     this.motionStepsCount = 0;
 
     if ('geolocation' in navigator) {
@@ -942,8 +953,10 @@ class GpsEngine {
     }
     this.isTracking = false;
     this.stepOriginCoord = null;
+    this.lastCoord = null;
     this.prevStepCoord = null;
     this.currentWalkDistance = 0;
+    this.accumulatedDistance = 0;
     this.stopMotionStepSensor();
     this.setStatus('idle', 'Pausiert');
   }
@@ -961,6 +974,7 @@ class GpsEngine {
   stopMotionStepSensor() {
     if (this.isMotionListening && this.motionHandler) {
       window.removeEventListener('devicemotion', this.motionHandler);
+      this.motionHandler = null;
       this.isMotionListening = false;
     }
   }
@@ -968,22 +982,42 @@ class GpsEngine {
   // Erkennt physische Schritte über den Beschleunigungssensor (Stoß beim Gehen)
   handleDeviceMotion(e) {
     if (!this.isTracking) return;
-    const acc = e.accelerationIncludingGravity || e.acceleration;
+    const acc = e.acceleration || e.accelerationIncludingGravity;
     if (!acc) return;
 
-    const x = acc.x || 0;
-    const y = acc.y || 0;
-    const z = acc.z || 0;
-    const mag = Math.sqrt(x * x + y * y + z * z);
+    let dynamicMag = 0;
+    // 1. Wenn acceleration ohne Gravitation vorliegt (Android & manche iOS Versionen)
+    if (e.acceleration && e.acceleration.x !== null && (e.acceleration.x !== 0 || e.acceleration.y !== 0 || e.acceleration.z !== 0)) {
+      const ax = acc.x || 0;
+      const ay = acc.y || 0;
+      const az = acc.z || 0;
+      dynamicMag = Math.sqrt(ax * ax + ay * ay + az * az);
+    } else if (e.accelerationIncludingGravity) {
+      // 2. Gravitations-Filterung (Tiefpassfilter zur Erdanziehungs-Trennung)
+      const gx = acc.x || 0;
+      const gy = acc.y || 0;
+      const gz = acc.z || 0;
+      const rawMag = Math.sqrt(gx * gx + gy * gy + gz * gz);
+      this.gravityFilter = 0.88 * this.gravityFilter + 0.12 * rawMag;
+      dynamicMag = Math.abs(rawMag - this.gravityFilter);
+    }
 
-    // Erdanziehung abziehen (~9.81 m/s²)
-    const delta = Math.abs(mag - 9.81);
     const now = performance.now();
 
-    // Typischer Schritt-Peak beim Laufen: Delta > 2.0 m/s² mit min. 320ms Intervall
-    if (delta > 2.0 && (now - this.lastMotionPeakTime > 320)) {
+    // Schritt-Erkennung:
+    // Beim Gehen mit Smartphone in der Hand (Blick aufs Display) liegt die dynamische Beschleunigung bei ca. 1.15 bis 2.8 m/s²
+    // Kadenz: Minimal 300ms (schneller Schritt) bis maximal 1800ms
+    if (dynamicMag >= 1.20 && (now - this.lastMotionPeakTime >= 300)) {
+      // Wenn letzter Schritt länger als 2500ms her ist, fängt eine neue Geh-Sequenz an
+      if (now - this.lastMotionPeakTime > 2500 && this.motionStepsCount > 0) {
+        this.motionStepsCount = 0;
+      }
+
       this.lastMotionPeakTime = now;
       this.motionStepsCount++;
+
+      this.updateStatusDisplay();
+      this.checkStepTrigger();
     }
   }
 
@@ -992,6 +1026,7 @@ class GpsEngine {
     this.lastPosition = pos;
     this.accuracy = pos.coords.accuracy || 999;
     this.hasPermission = true;
+    this.lastGpsTimestamp = performance.now();
 
     const currentLat = pos.coords.latitude;
     const currentLon = pos.coords.longitude;
@@ -999,74 +1034,136 @@ class GpsEngine {
     // Erster GPS-Fix: Als Ausgangspunkt setzen
     if (!this.stepOriginCoord) {
       this.stepOriginCoord = { lat: currentLat, lon: currentLon };
-      this.setStatus('locked', `GPS aktiv (±${Math.round(this.accuracy)}m) | 0.0m / ${this.stepThresholdMeters}m`);
+      this.lastCoord = { lat: currentLat, lon: currentLon };
+      this.updateStatusDisplay();
       if (this.onLocationUpdate) this.onLocationUpdate(pos, 0);
       return;
     }
 
-    // Distanz ZUM AUSGANGSPUNKT in Metern berechnen
+    // Inkrementelle Distanz seit letztem GPS-Punkt (akkumulierte Bewegung)
+    if (this.lastCoord) {
+      const delta = this.haversineMeters(this.lastCoord.lat, this.lastCoord.lon, currentLat, currentLon);
+      // Filter gegen GPS-Standstill-Noise (unter 0.25m ist Jitter, über 35m ist Satelliten-Sprung)
+      if (delta >= 0.25 && delta <= 35 && this.accuracy <= 50) {
+        this.accumulatedDistance += delta;
+        this.lastCoord = { lat: currentLat, lon: currentLon };
+      }
+    } else {
+      this.lastCoord = { lat: currentLat, lon: currentLon };
+    }
+
+    // Radialer Abstand zum Referenzpunkt
     const distFromOrigin = this.haversineMeters(
       this.stepOriginCoord.lat,
       this.stepOriginCoord.lon,
       currentLat,
       currentLon
     );
-    this.currentWalkDistance = distFromOrigin;
 
-    // Status-Update mit Live-Distanzanzeige
-    const distText = `${distFromOrigin.toFixed(1)}m / ${this.stepThresholdMeters}m`;
-    if (this.accuracy <= 25) {
-      this.setStatus('locked', `GPS aktiv (±${Math.round(this.accuracy)}m) | 🚶 ${distText}`);
-    } else if (this.accuracy <= 45) {
-      this.setStatus('searching', `GPS (±${Math.round(this.accuracy)}m) | 🚶 ${distText}`);
-    } else {
-      this.setStatus('searching', `Signal schwach (±${Math.round(this.accuracy)}m) | 🚶 ${distText}`);
+    // Gesamte effektive Gehdistanz für diesen Schritt
+    this.currentWalkDistance = Math.max(distFromOrigin, this.accumulatedDistance);
+
+    this.updateStatusDisplay();
+
+    // Satelliten-Sprung abfangen (> 45m)
+    if (distFromOrigin >= 45) {
+      this.stepOriginCoord = { lat: currentLat, lon: currentLon };
+      this.lastCoord = { lat: currentLat, lon: currentLon };
+      this.accumulatedDistance = 0;
+      this.motionStepsCount = 0;
+      return;
     }
 
-    const now = performance.now();
-
-    // Schritt auslösen wenn:
-    // a) Echte gegangene Distanz >= 2.0m (oder 2 Beschleunigungsschritte bei mind. 1.2m Distanz)
-    // b) Genauigkeit akzeptabel (<= 45m)
-    // c) Keine extreme Teleportation (> 50m)
-    // d) Cooldown abgelaufen (mind. 1000ms)
-    const thresholdReached = (distFromOrigin >= this.stepThresholdMeters) || 
-                             (this.motionStepsCount >= 2 && distFromOrigin >= 1.2);
-
-    if (
-      thresholdReached &&
-      distFromOrigin < 50 &&
-      this.accuracy <= 45 &&
-      (now - this.lastStepTime >= this.stepCooldownMs)
-    ) {
-      this.lastStepTime = now;
-      this.motionStepsCount = 0;
-      const originCoord = { ...this.stepOriginCoord };
-      this.prevStepCoord = { ...this.stepOriginCoord };
-      this.stepOriginCoord = { lat: currentLat, lon: currentLon };
-
-      // Berechne die reale Himmelsrichtung des gelaufenen Schritts
-      // 0° = Norden, 90° = Osten, 180° = Süden, 270° = Westen
-      const bearing = this.calculateBearing(
-        originCoord.lat,
-        originCoord.lon,
-        currentLat,
-        currentLon
-      );
-
-      this.triggerHaptic(50);
-      if (this.onStepTriggered) {
-        this.onStepTriggered(bearing, distFromOrigin);
-      }
-    } else if (distFromOrigin >= 50) {
-      // Satelliten-Sprung abgefangen: Ausgangspunkt neu kalibrieren
-      this.stepOriginCoord = { lat: currentLat, lon: currentLon };
-      this.motionStepsCount = 0;
-    }
+    // Prüfe Schritt-Trigger
+    this.checkStepTrigger();
 
     if (this.onLocationUpdate) {
-      this.onLocationUpdate(pos, distFromOrigin);
+      this.onLocationUpdate(pos, this.currentWalkDistance);
     }
+  }
+
+  // Prüft alle Schritt-Trigger-Bedingungen (Sensor-Fusion)
+  checkStepTrigger() {
+    const now = performance.now();
+    if (now - this.lastStepTime < this.stepCooldownMs) return;
+
+    const currentDist = this.currentWalkDistance;
+    const speed = (this.lastPosition && this.lastPosition.coords && this.lastPosition.coords.speed) || 0;
+    const hasOutdoorGps = this.accuracy <= 45;
+
+    // BEDINGUNGEN FÜR SCHRITT-AUSLÖSUNG (Sensor-Fusion):
+    // 1. Pedometer-Kombination: 3 echte Schritte & GPS bestätigt Bewegung draußen (mind. 0.6m ODER Speed > 0.2m/s ODER frisches GPS-Signal)
+    // 2. Reine GPS-Distanz: Mindestens 1.8 Meter Ortsveränderung bei akzeptabler GPS-Genauigkeit (falls Pedometer inaktiv)
+    // 3. Pedometer-Outdoor-Fallback: 4 Schritte bei aktivem GPS-Fix (auch wenn GPS kurz träge aktualisiert)
+    const conditionPedometerGps = (this.motionStepsCount >= this.targetMotionSteps) && 
+                                  hasOutdoorGps && 
+                                  (currentDist >= 0.6 || speed >= 0.25 || (now - this.lastGpsTimestamp < 8000));
+
+    const conditionGpsDistance = (currentDist >= this.stepThresholdMeters) && 
+                                 currentDist < 45 && 
+                                 hasOutdoorGps;
+
+    const conditionMotionFallback = (this.motionStepsCount >= 4) && hasOutdoorGps;
+
+    if (conditionPedometerGps || conditionGpsDistance || conditionMotionFallback) {
+      this.lastStepTime = now;
+      const walkDist = currentDist;
+
+      let bearing = null;
+      if (this.stepOriginCoord && this.lastPosition) {
+        const curLat = this.lastPosition.coords.latitude;
+        const curLon = this.lastPosition.coords.longitude;
+        // Peilung nur berechnen, wenn echte räumliche Distanz vorliegt (mind. 1.0m)
+        const radialDist = this.haversineMeters(this.stepOriginCoord.lat, this.stepOriginCoord.lon, curLat, curLon);
+        if (radialDist >= 1.0) {
+          bearing = this.calculateBearing(this.stepOriginCoord.lat, this.stepOriginCoord.lon, curLat, curLon);
+        }
+      }
+
+      // Referenzpunkte & Zähler für nächsten Schritt zurücksetzen
+      this.motionStepsCount = 0;
+      this.accumulatedDistance = 0;
+      this.currentWalkDistance = 0;
+      if (this.lastPosition) {
+        this.prevStepCoord = this.stepOriginCoord ? { ...this.stepOriginCoord } : null;
+        this.stepOriginCoord = {
+          lat: this.lastPosition.coords.latitude,
+          lon: this.lastPosition.coords.longitude
+        };
+        this.lastCoord = { ...this.stepOriginCoord };
+      }
+
+      this.triggerHaptic(50);
+      this.updateStatusDisplay();
+
+      if (this.onStepTriggered) {
+        this.onStepTriggered(bearing, walkDist);
+      }
+    }
+  }
+
+  // Wird aufgerufen, wenn der Spieler die Richtung wechselt (Kompass oder Tasten)
+  onDirectionChanged(newFacing) {
+    if (this.currentFacing === newFacing) return;
+    this.currentFacing = newFacing;
+
+    // Bei Richtungswechsel sofort den Schritt-Ursprung und Pedometer-Zwischenstand neu kalibrieren!
+    // Dadurch wird verhindert, dass vergangene Wegstrecken aus der alten Richtung
+    // die neue Richtung verfälschen oder Schritte "schlucken".
+    if (this.lastPosition) {
+      this.stepOriginCoord = {
+        lat: this.lastPosition.coords.latitude,
+        lon: this.lastPosition.coords.longitude
+      };
+      this.lastCoord = { ...this.stepOriginCoord };
+    }
+    this.motionStepsCount = 0;
+    this.accumulatedDistance = 0;
+    this.currentWalkDistance = 0;
+
+    // Kurzer haptischer Puls als Bestätigung des Richtungswechsels (15ms)
+    this.triggerHaptic(15);
+    this.updateStatusDisplay();
   }
 
   // Setzt den Referenzpunkt zurück ("Hier verankern")
@@ -1076,11 +1173,32 @@ class GpsEngine {
         lat: this.lastPosition.coords.latitude,
         lon: this.lastPosition.coords.longitude
       };
+      this.lastCoord = { ...this.stepOriginCoord };
     } else {
       this.stepOriginCoord = null;
+      this.lastCoord = null;
     }
     this.currentWalkDistance = 0;
+    this.accumulatedDistance = 0;
     this.motionStepsCount = 0;
+    this.updateStatusDisplay();
+  }
+
+  // Aktualisiert die Anzeige in der oberen Status-Pille
+  updateStatusDisplay() {
+    const dirNames = { up: 'NORD', right: 'OST', down: 'SÜD', left: 'WEST' };
+    const facingText = dirNames[this.currentFacing] || '';
+
+    const distInfo = `${this.currentWalkDistance.toFixed(1)}m`;
+    const stepsInfo = this.motionStepsCount > 0 ? `Schritt ${this.motionStepsCount}/${this.targetMotionSteps}` : `${distInfo}`;
+
+    if (this.accuracy <= 25) {
+      this.setStatus('locked', `GPS aktiv (±${Math.round(this.accuracy)}m) | 🚶 ${stepsInfo} [${facingText}]`);
+    } else if (this.accuracy <= 45) {
+      this.setStatus('searching', `GPS (±${Math.round(this.accuracy)}m) | 🚶 ${stepsInfo} [${facingText}]`);
+    } else {
+      this.setStatus('searching', `GPS sucht Signal (±${Math.round(this.accuracy)}m)`);
+    }
   }
 
   // Haversine-Distanz zwischen zwei WGS84-Koordinaten in Metern
@@ -1107,7 +1225,7 @@ class GpsEngine {
     return (θ * 180 / Math.PI + 360) % 360;
   }
 
-  // Manuelles Auslösen (für Tests)
+  // Manuelles Auslösen (für Tests & Simulation)
   triggerStep(walkDirectionOrBearing = null) {
     const now = performance.now();
     if (now - this.lastStepTime < this.stepCooldownMs) return;
@@ -2317,6 +2435,9 @@ class SokobanApp {
     this.creatorTapTimer = null;
     this.lastManualTurnTime = 0;
     this.lastCompassHeading = null;
+    this.hasActiveCompass = false;
+    this.lastCompassTime = 0;
+    this.orientationHandler = null;
 
     // DOM-Referenzen
     this.screens = {
@@ -2396,6 +2517,7 @@ class SokobanApp {
     document.getElementById('btn-enter-pyramid').addEventListener('click', () => {
       this.audio.init();
       this.audio.startMusic();
+      this.requestSensorPermissions();
       this.showScreen('pyramid');
     });
 
@@ -2484,40 +2606,21 @@ class SokobanApp {
     // SPIELSTEUERUNG (Buttons unter dem Spielfeld)
     if (this.btnTurnLeft) {
       this.btnTurnLeft.addEventListener('click', () => {
-        const targetGrid = this.screenDirToGrid('left');
-        if (this.engine.player.facing !== targetGrid) {
-          this.engine.player.facing = targetGrid;
-          if (this.renderer && this.renderer.playerAnim) {
-            this.renderer.playerAnim.facing = targetGrid;
-          }
-          this.lastManualTurnTime = performance.now();
-          this.audio.playStep();
-          this.updateHudStats();
-        } else if (this.isReviewerMode) {
-          this.executeMove(targetGrid);
-        }
+        this.requestSensorPermissions();
+        this.turnPlayerRelative(true); // 90° nach links drehen
       });
     }
 
     if (this.btnTurnRight) {
       this.btnTurnRight.addEventListener('click', () => {
-        const targetGrid = this.screenDirToGrid('right');
-        if (this.engine.player.facing !== targetGrid) {
-          this.engine.player.facing = targetGrid;
-          if (this.renderer && this.renderer.playerAnim) {
-            this.renderer.playerAnim.facing = targetGrid;
-          }
-          this.lastManualTurnTime = performance.now();
-          this.audio.playStep();
-          this.updateHudStats();
-        } else if (this.isReviewerMode) {
-          this.executeMove(targetGrid);
-        }
+        this.requestSensorPermissions();
+        this.turnPlayerRelative(false); // 90° nach rechts drehen
       });
     }
 
     if (this.btnStepForward) {
       this.btnStepForward.addEventListener('click', () => {
+        this.requestSensorPermissions();
         if (this.isReviewerMode) {
           // Im Reviewer-Modus: Schritt vorwärts ausführen
           if (this.engine && this.engine.player) {
@@ -2527,7 +2630,7 @@ class SokobanApp {
           // Im normalen Outdoor-Modus: GPS-Referenzpunkt "Hier verankern"
           this.gps.resetStepOrigin();
           this.audio.playStep();
-          this.showMessageToast('🎯 GPS-Startpunkt hier verankert! Laufe in eine Richtung los.');
+          this.showMessageToast('🎯 GPS-Startpunkt hier verankert! Laufe in Blickrichtung los.');
         }
       });
     }
@@ -2647,7 +2750,7 @@ class SokobanApp {
     });
 
     // Reale Smartphone-Kompass-Erkennung (Drehung im Freien)
-    const handleOrientation = (e) => {
+    this.orientationHandler = (e) => {
       if (this.currentScreen !== 'game' || !this.engine || !this.engine.player) return;
 
       // Wenn der Spieler vor weniger als 2.2 Sekunden manuell gedreht hat: Kompass pausieren
@@ -2663,8 +2766,11 @@ class SokobanApp {
 
       if (heading === null || isNaN(heading)) return;
 
-      // Zitter-Filter: Micro-Bewegungen unter 2.5 Grad dämpfen
-      if (this.lastCompassHeading !== null && Math.abs(heading - this.lastCompassHeading) < 2.5) {
+      this.hasActiveCompass = true;
+      this.lastCompassTime = now;
+
+      // Zitter-Filter: Micro-Bewegungen unter 2.0 Grad dämpfen
+      if (this.lastCompassHeading !== null && Math.abs(heading - this.lastCompassHeading) < 2.0) {
         return;
       }
       this.lastCompassHeading = heading;
@@ -2679,6 +2785,9 @@ class SokobanApp {
         if (this.renderer && this.renderer.playerAnim) {
           this.renderer.playerAnim.facing = newFacing;
         }
+        if (this.gps) {
+          this.gps.onDirectionChanged(newFacing);
+        }
       }
 
       if (this.renderer) {
@@ -2686,24 +2795,31 @@ class SokobanApp {
       }
     };
 
-    window.addEventListener('deviceorientation', handleOrientation, true);
-    window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-
-    // iOS Safari Kompass-Berechtigung auf Nutzer-Geste
-    const requestCompassPermission = () => {
-      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        DeviceOrientationEvent.requestPermission().then(res => {
-          if (res === 'granted') {
-            window.addEventListener('deviceorientation', handleOrientation, true);
-          }
-        }).catch(() => {});
-      }
-    };
+    window.addEventListener('deviceorientation', this.orientationHandler, true);
+    window.addEventListener('deviceorientationabsolute', this.orientationHandler, true);
 
     const enterBtn = document.getElementById('btn-enter-pyramid');
-    if (enterBtn) enterBtn.addEventListener('click', requestCompassPermission, { once: true });
+    if (enterBtn) enterBtn.addEventListener('click', () => this.requestSensorPermissions(), { once: true });
     if (this.canvas) {
-      this.canvas.addEventListener('touchstart', requestCompassPermission, { once: true });
+      this.canvas.addEventListener('touchstart', () => this.requestSensorPermissions(), { once: true, passive: true });
+    }
+  }
+
+  // Fragt Sensor-Berechtigungen (iOS Safari) für Kompass und Pedometer-Beschleunigungsmesser ab
+  requestSensorPermissions() {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().then(res => {
+        if (res === 'granted' && this.orientationHandler) {
+          window.addEventListener('deviceorientation', this.orientationHandler, true);
+        }
+      }).catch(() => {});
+    }
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      DeviceMotionEvent.requestPermission().then(res => {
+        if (res === 'granted' && this.gps) {
+          this.gps.startMotionStepSensor();
+        }
+      }).catch(() => {});
     }
   }
 
@@ -2739,10 +2855,19 @@ class SokobanApp {
   setupGpsCallbacks() {
     this.gps.onStepTriggered = (bearing, distance) => {
       if (this.currentScreen === 'game' && this.engine && this.engine.player) {
-        // Echter Schritt im Freien per GPS: Richtung aus GPS-Peilung & Spielfeld-Ausrichtung ermitteln
-        const targetDir = this.bearingToGridDir(bearing);
+        // Echter Schritt im Freien per Sensor-Fusion (Pedometer + GPS):
+        // Standard & Primär: Die aktuelle Blickrichtung des Spielers (Kompass & Tasten)
+        let targetDir = this.engine.player.facing;
+
+        // Falls kein aktiver Kompass läuft und eine signifikante GPS-Peilung vorliegt:
+        const hasCompass = this.hasActiveCompass && (performance.now() - (this.lastCompassTime || 0) < 4000);
+        if (!hasCompass && bearing !== null && bearing !== undefined) {
+          const gpsDir = this.bearingToGridDir(bearing);
+          if (gpsDir) targetDir = gpsDir;
+        }
+
         const dirNames = { up: 'NORD', right: 'OST', down: 'SÜD', left: 'WEST' };
-        this.showMessageToast(`🚶 Schritt erkannt: ${dirNames[targetDir] || targetDir} (${(distance || 0).toFixed(1)}m)`);
+        this.showMessageToast(`🚶 Schritt ausgeführt: ${dirNames[targetDir] || targetDir}`);
         this.executeMove(targetDir);
       }
     };
@@ -2759,34 +2884,37 @@ class SokobanApp {
 
   // Mappt einen kontinuierlichen Kompass-Winkel auf 4 Quadranten mit Hysterese-Puffer gegen Flackern
   angleToDirection(angle, currentFacing) {
-    const h = 8; // 8 Grad Hysterese gegen Flackern an den Quadranten-Grenzen
+    const h = 12; // 12 Grad Hysterese-Puffer gegen Flackern an den Quadranten-Grenzen
+    const norm = (angle + 360) % 360;
+
     if (currentFacing === 'up') {
-      if (angle >= 45 + h && angle < 135 - h) return 'right';
-      if (angle >= 135 - h && angle < 225 + h) return 'down';
-      if (angle >= 225 + h && angle < 315 - h) return 'left';
-      return 'up';
-    }
-    if (currentFacing === 'right') {
-      if (angle >= 135 + h && angle < 225 - h) return 'down';
-      if (angle >= 225 - h && angle < 315 + h) return 'left';
-      if (angle >= 315 + h || angle < 45 - h) return 'up';
-      return 'right';
-    }
-    if (currentFacing === 'down') {
-      if (angle >= 225 + h && angle < 315 - h) return 'left';
-      if (angle >= 315 - h || angle < 45 + h) return 'up';
-      if (angle >= 45 + h && angle < 135 - h) return 'right';
-      return 'down';
-    }
-    if (currentFacing === 'left') {
-      if (angle >= 315 + h || angle < 45 - h) return 'up';
-      if (angle >= 45 - h && angle < 135 + h) return 'right';
-      if (angle >= 135 + h && angle < 225 - h) return 'down';
+      if (norm < 45 + h || norm > 315 - h) return 'up';
+      if (norm >= 45 + h && norm < 135) return 'right';
+      if (norm >= 135 && norm < 225) return 'down';
       return 'left';
     }
-    if (angle >= 45 && angle < 135) return 'right';
-    if (angle >= 135 && angle < 225) return 'down';
-    if (angle >= 225 && angle < 315) return 'left';
+    if (currentFacing === 'right') {
+      if (norm >= 45 - h && norm < 135 + h) return 'right';
+      if (norm >= 135 + h && norm < 225) return 'down';
+      if (norm >= 225 && norm < 315) return 'left';
+      return 'up';
+    }
+    if (currentFacing === 'down') {
+      if (norm >= 135 - h && norm < 225 + h) return 'down';
+      if (norm >= 225 + h && norm < 315) return 'left';
+      if (norm >= 315 || norm < 45) return 'up';
+      return 'right';
+    }
+    if (currentFacing === 'left') {
+      if (norm >= 225 - h && norm < 315 + h) return 'left';
+      if (norm >= 315 + h || norm < 45) return 'up';
+      if (norm >= 45 && norm < 135) return 'right';
+      return 'down';
+    }
+
+    if (norm >= 45 && norm < 135) return 'right';
+    if (norm >= 135 && norm < 225) return 'down';
+    if (norm >= 225 && norm < 315) return 'left';
     return 'up';
   }
 
@@ -2803,28 +2931,11 @@ class SokobanApp {
       this.lastManualTurnTime = performance.now();
       this.audio.playStep();
       this.updateHudStats();
+      if (this.gps) this.gps.onDirectionChanged(targetFacing);
       return;
     }
 
-    const cur = this.engine.player.facing;
-    let newFacing = cur;
-    if (direction === false) { // Rechts
-      if (cur === 'down' || cur === 'up') newFacing = 'right';
-      else if (cur === 'right') newFacing = 'down';
-      else if (cur === 'left') newFacing = 'up';
-    } else { // Links
-      if (cur === 'down' || cur === 'up') newFacing = 'left';
-      else if (cur === 'left') newFacing = 'down';
-      else if (cur === 'right') newFacing = 'up';
-    }
-
-    this.engine.player.facing = newFacing;
-    if (this.renderer && this.renderer.playerAnim) {
-      this.renderer.playerAnim.facing = newFacing;
-    }
-    this.lastManualTurnTime = performance.now();
-    this.audio.playStep();
-    this.updateHudStats();
+    this.turnPlayerRelative(!direction);
   }
 
   // Dreht die Figur relativ um 90°
@@ -2841,6 +2952,9 @@ class SokobanApp {
     this.lastManualTurnTime = performance.now();
     this.audio.playStep();
     this.updateHudStats();
+    if (this.gps) {
+      this.gps.onDirectionChanged(newFacing);
+    }
   }
 
   // Dreht die Figur um 180° um
@@ -2857,6 +2971,9 @@ class SokobanApp {
     this.lastManualTurnTime = performance.now();
     this.audio.playStep();
     this.updateHudStats();
+    if (this.gps) {
+      this.gps.onDirectionChanged(newFacing);
+    }
   }
 
   // Rotiert das gesamte Spielfeld um die Figur um 90°
@@ -2872,8 +2989,11 @@ class SokobanApp {
     if (this.lastCompassHeading !== null && this.engine && this.engine.player) {
       const gridAngle = (this.lastCompassHeading - nextAngle + 360) % 360;
       const newFacing = this.angleToDirection(gridAngle, this.engine.player.facing);
-      this.engine.player.facing = newFacing;
-      if (this.renderer.playerAnim) this.renderer.playerAnim.facing = newFacing;
+      if (newFacing !== this.engine.player.facing) {
+        this.engine.player.facing = newFacing;
+        if (this.renderer.playerAnim) this.renderer.playerAnim.facing = newFacing;
+        if (this.gps) this.gps.onDirectionChanged(newFacing);
+      }
       this.renderer.setCompassHeadingAngle(gridAngle);
     }
 
@@ -2921,6 +3041,9 @@ class SokobanApp {
           this.lastManualTurnTime = performance.now();
           this.audio.playStep();
           this.updateHudStats();
+          if (this.gps) {
+            this.gps.onDirectionChanged(gridDir);
+          }
         }
       }
     }
@@ -3003,6 +3126,11 @@ class SokobanApp {
       // Kollision gegen Wand oder blockierte Kiste
       this.audio.playBump();
       this.gps.triggerCollisionHaptic();
+      if (res.reason === 'wall') {
+        this.showMessageToast('🧱 Wand im Weg! Drehe dich mit Links/Rechts');
+      } else if (res.reason === 'blocked_box') {
+        this.showMessageToast('📦 Kiste blockiert! Kann nicht geschoben werden');
+      }
     }
 
     this.updateHudStats();
