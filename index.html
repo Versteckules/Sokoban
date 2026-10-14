@@ -144,9 +144,16 @@
               <span class="stat-label">SCHÜBE</span>
               <strong id="hud-push-count">0</strong>
             </div>
+            <div class="stat-box stat-box-facing">
+              <span class="stat-label">BLICK</span>
+              <strong id="hud-facing-label">⬇ Süd</strong>
+            </div>
           </div>
 
           <div class="hud-actions">
+            <button id="btn-toggle-dpad" class="btn-sm btn-action" title="D-Pad Tasten anzeigen / verbergen">
+              <span>🕹️ D-Pad</span>
+            </button>
             <button id="btn-undo" class="btn-sm btn-action" title="Zug rückgängig (Z)">
               <span>↩ Undo</span>
             </button>
@@ -163,16 +170,16 @@
 
         <!-- SPIEL-STEUERUNG (SCHLANK & INTUITIV) -->
         <div class="game-control-bar" id="game-control-bar">
-          <button id="btn-turn-left" class="btn-ctrl btn-turn" title="Figur nach links drehen (↺)">
-            <span class="ctrl-icon">↺</span>
+          <button id="btn-turn-left" class="btn-ctrl btn-turn" title="Figur nach links drehen / schieben (◀)">
+            <span class="ctrl-icon">◀</span>
             <span class="ctrl-label">Links</span>
           </button>
-          <button id="btn-step-forward" class="btn-ctrl btn-step btn-primary btn-glow" title="Einen Schritt in Blickrichtung laufen (🚶)">
+          <button id="btn-step-forward" class="btn-ctrl btn-step btn-primary btn-glow" title="Einen Schritt in Blickrichtung laufen / schieben (🚶)">
             <span class="ctrl-icon">🚶</span>
             <span class="ctrl-label">Vorwärts</span>
           </button>
-          <button id="btn-turn-right" class="btn-ctrl btn-turn" title="Figur nach rechts drehen (↻)">
-            <span class="ctrl-icon">↻</span>
+          <button id="btn-turn-right" class="btn-ctrl btn-turn" title="Figur nach rechts drehen / schieben (▶)">
+            <span class="ctrl-icon">▶</span>
             <span class="ctrl-label">Rechts</span>
           </button>
           <button id="btn-rotate-field" class="btn-ctrl btn-rotate" title="Spielfeld um sich drehen (90°)">

@@ -163,12 +163,28 @@ export class GpsEngine {
 
       if (!isBounceBack && (now - this.lastStepTime >= this.stepCooldownMs)) {
         this.lastStepTime = now;
+        const originCoord = { ...this.stepOriginCoord };
         this.prevStepCoord = { ...this.stepOriginCoord };
         this.stepOriginCoord = { lat: currentLat, lon: currentLon };
 
+        // Berechne die reale Himmelsrichtung des gelaufenen Schritts (Norden=up, Osten=right, etc.)
+        let walkDirection = null;
+        if (originCoord) {
+          const bearing = this.calculateBearing(
+            originCoord.lat,
+            originCoord.lon,
+            currentLat,
+            currentLon
+          );
+          if (bearing >= 315 || bearing < 45) walkDirection = 'up';
+          else if (bearing >= 45 && bearing < 135) walkDirection = 'right';
+          else if (bearing >= 135 && bearing < 225) walkDirection = 'down';
+          else if (bearing >= 225 && bearing < 315) walkDirection = 'left';
+        }
+
         this.triggerHaptic(45);
         if (this.onStepTriggered) {
-          this.onStepTriggered();
+          this.onStepTriggered(walkDirection);
         }
       }
     } else if (distFromOrigin >= 40) {
@@ -211,14 +227,25 @@ export class GpsEngine {
     return R * c;
   }
 
-  triggerStep() {
+  // Berechnet die Himmelsrichtung / Peilung zwischen zwei Koordinaten in Grad (0° = N, 90° = O, 180° = S, 270° = W)
+  calculateBearing(lat1, lon1, lat2, lon2) {
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+    const y = Math.sin(Δλ) * Math.cos(φ2);
+    const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+    const θ = Math.atan2(y, x);
+    return (θ * 180 / Math.PI + 360) % 360;
+  }
+
+  triggerStep(walkDirection = null) {
     const now = performance.now();
     if (now - this.lastStepTime < this.stepCooldownMs) return;
     this.lastStepTime = now;
 
     this.triggerHaptic(45);
     if (this.onStepTriggered) {
-      this.onStepTriggered();
+      this.onStepTriggered(walkDirection);
     }
   }
 

@@ -192,6 +192,10 @@ export class SokobanRenderer {
 
   // Registriert Zug für flüssige Interpolation
   onMoveExecuted(moveResult) {
+    if (moveResult.facing) {
+      this.playerAnim.facing = moveResult.facing;
+    }
+
     if (!moveResult.success) {
       this.triggerScreenshake(2.5, 80);
       return;
@@ -856,7 +860,7 @@ export class SokobanRenderer {
     this.ctx.restore();
   }
 
-  // Zeichnet einen edlen goldenen Richtungspfeil vor der Figur
+  // Zeichnet einen edlen goldenen Richtungspfeil und Laternenlichtkegel vor der Figur
   renderFacingIndicator(screenFacing, s) {
     this.ctx.save();
     let angle = 0;
@@ -866,17 +870,44 @@ export class SokobanRenderer {
     else if (screenFacing === 'up') angle = -Math.PI / 2;
 
     this.ctx.rotate(angle);
-    const dist = s * 0.42;
-    this.ctx.fillStyle = '#fbbf24';
-    this.ctx.shadowColor = '#f59e0b';
-    this.ctx.shadowBlur = 10;
+    const dist = s * 0.44;
+
+    // 1. Laternen-Lichtkegel auf den Boden in Blickrichtung (beleuchtet das Zielfeld / die Kiste)
+    const beamGrad = this.ctx.createRadialGradient(dist * 0.3, 0, 4, dist + s * 0.7, 0, s * 0.9);
+    beamGrad.addColorStop(0, 'rgba(251, 191, 36, 0.42)');
+    beamGrad.addColorStop(0.35, 'rgba(245, 158, 11, 0.22)');
+    beamGrad.addColorStop(0.8, 'rgba(245, 158, 11, 0.08)');
+    beamGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+    this.ctx.fillStyle = beamGrad;
     this.ctx.beginPath();
-    this.ctx.moveTo(dist + s * 0.22, 0);
-    this.ctx.lineTo(dist, -s * 0.12);
-    this.ctx.lineTo(dist + s * 0.05, 0);
-    this.ctx.lineTo(dist, s * 0.12);
+    this.ctx.moveTo(dist * 0.25, -s * 0.16);
+    this.ctx.lineTo(dist + s * 0.85, -s * 0.52);
+    this.ctx.lineTo(dist + s * 0.85, s * 0.52);
+    this.ctx.lineTo(dist * 0.25, s * 0.16);
     this.ctx.closePath();
     this.ctx.fill();
+
+    // 2. Pulsierender, strahlender Richtungs-Chevron (Pfeil)
+    const pulse = Math.sin(performance.now() * 0.007) * (s * 0.04);
+    const arrowDist = dist + pulse;
+
+    this.ctx.shadowColor = '#f59e0b';
+    this.ctx.shadowBlur = 14;
+    this.ctx.fillStyle = '#fef08a';
+    this.ctx.beginPath();
+    this.ctx.moveTo(arrowDist + s * 0.30, 0);
+    this.ctx.lineTo(arrowDist + s * 0.06, -s * 0.16);
+    this.ctx.lineTo(arrowDist + s * 0.12, 0);
+    this.ctx.lineTo(arrowDist + s * 0.06, s * 0.16);
+    this.ctx.closePath();
+    this.ctx.fill();
+
+    // Goldene Kontur für maximalen Kontrast auf jedem Untergrund
+    this.ctx.strokeStyle = '#b45309';
+    this.ctx.lineWidth = 1.5;
+    this.ctx.stroke();
+
     this.ctx.restore();
   }
 

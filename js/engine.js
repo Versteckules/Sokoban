@@ -122,7 +122,7 @@ export class SokobanEngine {
 
     // 1. Kollision mit Spielfeldrand oder Wand
     if (this.isWall(targetX, targetY)) {
-      return { success: false, reason: 'wall', target: { x: targetX, y: targetY } };
+      return { success: false, reason: 'wall', target: { x: targetX, y: targetY }, facing };
     }
 
     // 2. Prüfe ob Kiste auf Zielfeld steht
@@ -135,7 +135,7 @@ export class SokobanEngine {
 
       // Kann Kiste geschoben werden? (keine Wand und keine weitere Kiste dahinter)
       if (this.isWall(boxTargetX, boxTargetY) || this.getBoxIndexAt(boxTargetX, boxTargetY) !== -1) {
-        return { success: false, reason: 'blocked_box', target: { x: boxTargetX, y: boxTargetY } };
+        return { success: false, reason: 'blocked_box', target: { x: boxTargetX, y: boxTargetY }, facing };
       }
 
       // Snapshot für Undo anlegen

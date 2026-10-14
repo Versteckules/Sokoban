@@ -806,6 +806,12 @@ body {
   color: #fbbf24;
 }
 
+.stat-box-facing strong {
+  color: #38bdf8;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .hud-actions {
   display: flex;
   gap: 8px;
@@ -813,6 +819,13 @@ body {
 
 .btn-action {
   font-weight: 700;
+}
+
+#btn-toggle-dpad.active {
+  background: rgba(245, 158, 11, 0.25);
+  border-color: #fbbf24;
+  color: #fbbf24;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.4);
 }
 
 /* CANVAS WRAPPER */

@@ -374,7 +374,7 @@ class SokobanEngine {
 
     // 1. Kollision mit Spielfeldrand oder Wand
     if (this.isWall(targetX, targetY)) {
-      return { success: false, reason: 'wall', target: { x: targetX, y: targetY } };
+      return { success: false, reason: 'wall', target: { x: targetX, y: targetY }, facing };
     }
 
     // 2. Prüfe ob Kiste auf Zielfeld steht
@@ -387,7 +387,7 @@ class SokobanEngine {
 
       // Kann Kiste geschoben werden? (keine Wand und keine weitere Kiste dahinter)
       if (this.isWall(boxTargetX, boxTargetY) || this.getBoxIndexAt(boxTargetX, boxTargetY) !== -1) {
-        return { success: false, reason: 'blocked_box', target: { x: boxTargetX, y: boxTargetY } };
+        return { success: false, reason: 'blocked_box', target: { x: boxTargetX, y: boxTargetY }, facing };
       }
 
       // Snapshot für Undo anlegen
@@ -1058,12 +1058,28 @@ class GpsEngine {
 
       if (!isBounceBack && (now - this.lastStepTime >= this.stepCooldownMs)) {
         this.lastStepTime = now;
+        const originCoord = { ...this.stepOriginCoord };
         this.prevStepCoord = { ...this.stepOriginCoord };
         this.stepOriginCoord = { lat: currentLat, lon: currentLon };
 
+        // Berechne die reale Himmelsrichtung des gelaufenen Schritts (Norden=up, Osten=right, etc.)
+        let walkDirection = null;
+        if (originCoord) {
+          const bearing = this.calculateBearing(
+            originCoord.lat,
+            originCoord.lon,
+            currentLat,
+            currentLon
+          );
+          if (bearing >= 315 || bearing < 45) walkDirection = 'up';
+          else if (bearing >= 45 && bearing < 135) walkDirection = 'right';
+          else if (bearing >= 135 && bearing < 225) walkDirection = 'down';
+          else if (bearing >= 225 && bearing < 315) walkDirection = 'left';
+        }
+
         this.triggerHaptic(45);
         if (this.onStepTriggered) {
-          this.onStepTriggered();
+          this.onStepTriggered(walkDirection);
         }
       }
     } else if (distFromOrigin >= 40) {
@@ -1106,14 +1122,25 @@ class GpsEngine {
     return R * c;
   }
 
-  triggerStep() {
+  // Berechnet die Himmelsrichtung / Peilung zwischen zwei Koordinaten in Grad (0° = N, 90° = O, 180° = S, 270° = W)
+  calculateBearing(lat1, lon1, lat2, lon2) {
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+    const y = Math.sin(Δλ) * Math.cos(φ2);
+    const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+    const θ = Math.atan2(y, x);
+    return (θ * 180 / Math.PI + 360) % 360;
+  }
+
+  triggerStep(walkDirection = null) {
     const now = performance.now();
     if (now - this.lastStepTime < this.stepCooldownMs) return;
     this.lastStepTime = now;
 
     this.triggerHaptic(45);
     if (this.onStepTriggered) {
-      this.onStepTriggered();
+      this.onStepTriggered(walkDirection);
     }
   }
 
@@ -1344,6 +1371,10 @@ class SokobanRenderer {
 
   // Registriert Zug für flüssige Interpolation
   onMoveExecuted(moveResult) {
+    if (moveResult.facing) {
+      this.playerAnim.facing = moveResult.facing;
+    }
+
     if (!moveResult.success) {
       this.triggerScreenshake(2.5, 80);
       return;
@@ -2008,7 +2039,7 @@ class SokobanRenderer {
     this.ctx.restore();
   }
 
-  // Zeichnet einen edlen goldenen Richtungspfeil vor der Figur
+  // Zeichnet einen edlen goldenen Richtungspfeil und Laternenlichtkegel vor der Figur
   renderFacingIndicator(screenFacing, s) {
     this.ctx.save();
     let angle = 0;
@@ -2018,17 +2049,44 @@ class SokobanRenderer {
     else if (screenFacing === 'up') angle = -Math.PI / 2;
 
     this.ctx.rotate(angle);
-    const dist = s * 0.42;
-    this.ctx.fillStyle = '#fbbf24';
-    this.ctx.shadowColor = '#f59e0b';
-    this.ctx.shadowBlur = 10;
+    const dist = s * 0.44;
+
+    // 1. Laternen-Lichtkegel auf den Boden in Blickrichtung (beleuchtet das Zielfeld / die Kiste)
+    const beamGrad = this.ctx.createRadialGradient(dist * 0.3, 0, 4, dist + s * 0.7, 0, s * 0.9);
+    beamGrad.addColorStop(0, 'rgba(251, 191, 36, 0.42)');
+    beamGrad.addColorStop(0.35, 'rgba(245, 158, 11, 0.22)');
+    beamGrad.addColorStop(0.8, 'rgba(245, 158, 11, 0.08)');
+    beamGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+    this.ctx.fillStyle = beamGrad;
     this.ctx.beginPath();
-    this.ctx.moveTo(dist + s * 0.22, 0);
-    this.ctx.lineTo(dist, -s * 0.12);
-    this.ctx.lineTo(dist + s * 0.05, 0);
-    this.ctx.lineTo(dist, s * 0.12);
+    this.ctx.moveTo(dist * 0.25, -s * 0.16);
+    this.ctx.lineTo(dist + s * 0.85, -s * 0.52);
+    this.ctx.lineTo(dist + s * 0.85, s * 0.52);
+    this.ctx.lineTo(dist * 0.25, s * 0.16);
     this.ctx.closePath();
     this.ctx.fill();
+
+    // 2. Pulsierender, strahlender Richtungs-Chevron (Pfeil)
+    const pulse = Math.sin(performance.now() * 0.007) * (s * 0.04);
+    const arrowDist = dist + pulse;
+
+    this.ctx.shadowColor = '#f59e0b';
+    this.ctx.shadowBlur = 14;
+    this.ctx.fillStyle = '#fef08a';
+    this.ctx.beginPath();
+    this.ctx.moveTo(arrowDist + s * 0.30, 0);
+    this.ctx.lineTo(arrowDist + s * 0.06, -s * 0.16);
+    this.ctx.lineTo(arrowDist + s * 0.12, 0);
+    this.ctx.lineTo(arrowDist + s * 0.06, s * 0.16);
+    this.ctx.closePath();
+    this.ctx.fill();
+
+    // Goldene Kontur für maximalen Kontrast auf jedem Untergrund
+    this.ctx.strokeStyle = '#b45309';
+    this.ctx.lineWidth = 1.5;
+    this.ctx.stroke();
+
     this.ctx.restore();
   }
 
@@ -2443,11 +2501,39 @@ class SokobanApp {
 
     // SPIELSTEUERUNG (Buttons unter dem Spielfeld)
     if (this.btnTurnLeft) {
-      this.btnTurnLeft.addEventListener('click', () => this.turnPlayer(true));
+      this.btnTurnLeft.addEventListener('click', () => {
+        const targetGrid = this.screenDirToGrid('left');
+        if (this.engine.player.facing !== targetGrid) {
+          this.engine.player.facing = targetGrid;
+          if (this.renderer && this.renderer.playerAnim) {
+            this.renderer.playerAnim.facing = targetGrid;
+          }
+          this.lastManualTurnTime = performance.now();
+          this.audio.playStep();
+          this.updateHudStats();
+        } else {
+          this.executeMove(targetGrid);
+        }
+      });
     }
+
     if (this.btnTurnRight) {
-      this.btnTurnRight.addEventListener('click', () => this.turnPlayer(false));
+      this.btnTurnRight.addEventListener('click', () => {
+        const targetGrid = this.screenDirToGrid('right');
+        if (this.engine.player.facing !== targetGrid) {
+          this.engine.player.facing = targetGrid;
+          if (this.renderer && this.renderer.playerAnim) {
+            this.renderer.playerAnim.facing = targetGrid;
+          }
+          this.lastManualTurnTime = performance.now();
+          this.audio.playStep();
+          this.updateHudStats();
+        } else {
+          this.executeMove(targetGrid);
+        }
+      });
     }
+
     if (this.btnStepForward) {
       this.btnStepForward.addEventListener('click', () => {
         if (this.engine && this.engine.player) {
@@ -2455,41 +2541,54 @@ class SokobanApp {
         }
       });
     }
+
     if (this.btnRotateField) {
       this.btnRotateField.addEventListener('click', () => this.rotateField());
     }
 
-    // Direktes Antippen des Spielfelds (Drehen & Laufen)
+    // D-Pad Toggle Button
+    const btnToggleDpad = document.getElementById('btn-toggle-dpad');
+    if (btnToggleDpad) {
+      btnToggleDpad.addEventListener('click', () => {
+        if (this.touchDpadContainer) {
+          const isHidden = this.touchDpadContainer.style.display === 'none' || !this.touchDpadContainer.style.display;
+          this.touchDpadContainer.style.display = isHidden ? 'flex' : 'none';
+          btnToggleDpad.classList.toggle('active', isHidden);
+        }
+      });
+    }
+
+    // Direktes Antippen des Spielfelds (1-Klick: Drehen & Laufen / Schieben)
     if (this.canvas) {
       this.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
     }
 
-    // Tastatursteuerung (Intuitive Steuerung auf Desktop/Laptop)
+    // Tastatursteuerung (Intuitive Steuerung auf Desktop/Laptop: Bewegen & Kistenschieben!)
     window.addEventListener('keydown', (e) => {
       if (this.currentScreen !== 'game' || !this.engine || !this.engine.player) return;
 
       const key = e.key.toLowerCase();
       if (key === 'arrowup' || key === 'w') {
         e.preventDefault();
-        this.executeMove(this.engine.player.facing);
-      } else if (key === 'arrowleft' || key === 'a') {
-        e.preventDefault();
-        this.turnPlayer(true);
-      } else if (key === 'arrowright' || key === 'd') {
-        e.preventDefault();
-        this.turnPlayer(false);
+        this.executeMove(this.screenDirToGrid('up'));
       } else if (key === 'arrowdown' || key === 's') {
         e.preventDefault();
-        this.turnPlayerAround();
-      } else if (key === ' ' || key === 'spacebar') {
+        this.executeMove(this.screenDirToGrid('down'));
+      } else if (key === 'arrowleft' || key === 'a') {
+        e.preventDefault();
+        this.executeMove(this.screenDirToGrid('left'));
+      } else if (key === 'arrowright' || key === 'd') {
+        e.preventDefault();
+        this.executeMove(this.screenDirToGrid('right'));
+      } else if (key === ' ' || key === 'spacebar' || key === 'enter') {
         e.preventDefault();
         this.executeMove(this.engine.player.facing);
       } else if (key === 'q') {
         e.preventDefault();
-        this.turnPlayer(true);
+        this.turnPlayerRelative(true);
       } else if (key === 'e') {
         e.preventDefault();
-        this.turnPlayer(false);
+        this.turnPlayerRelative(false);
       } else if (key === 'z') {
         e.preventDefault();
         this.handleUndo();
@@ -2499,7 +2598,7 @@ class SokobanApp {
       }
     });
 
-    // Touch D-Pad Buttons
+    // Touch D-Pad Buttons (Direktes Bewegen & Schieben in alle 4 Richtungen)
     const bindTouch = (id, action) => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -2511,10 +2610,11 @@ class SokobanApp {
       el.addEventListener('click', handler);
     };
 
-    bindTouch('btn-touch-up', () => this.executeMove('up', false));
-    bindTouch('btn-touch-down', () => this.executeMove('down', false));
-    bindTouch('btn-touch-left', () => this.executeMove('left', false));
-    bindTouch('btn-touch-right', () => this.executeMove('right', false));
+    bindTouch('btn-touch-up', () => this.executeMove(this.screenDirToGrid('up')));
+    bindTouch('btn-touch-down', () => this.executeMove(this.screenDirToGrid('down')));
+    bindTouch('btn-touch-left', () => this.executeMove(this.screenDirToGrid('left')));
+    bindTouch('btn-touch-right', () => this.executeMove(this.screenDirToGrid('right')));
+    bindTouch('btn-touch-center', () => this.executeMove(this.engine.player.facing));
     bindTouch('btn-touch-undo', () => this.handleUndo());
     bindTouch('btn-touch-reset', () => this.handleReset());
 
@@ -2612,12 +2712,26 @@ class SokobanApp {
     }
   }
 
+  // Mappt Bildschirm-Richtungen ('up', 'right', 'down', 'left') auf das interne Gitter unter Felddrehung
+  screenDirToGrid(screenDir) {
+    const rot = this.renderer ? this.renderer.rotation : 0;
+    if (rot === 0) return screenDir;
+    const dirs = ['up', 'right', 'down', 'left'];
+    const sIdx = dirs.indexOf(screenDir);
+    if (sIdx === -1) return screenDir;
+    const steps = Math.round(rot / 90);
+    const gIdx = (sIdx - steps + 4) % 4;
+    return dirs[gIdx];
+  }
+
   // GPS & Bewegungssensor Callbacks
   setupGpsCallbacks() {
-    this.gps.onStepTriggered = () => {
+    this.gps.onStepTriggered = (walkDirection) => {
       if (this.currentScreen === 'game' && this.engine && this.engine.player) {
-        // Echter Schritt im Freien per GPS: Läuft genau in Blickrichtung!
-        this.executeMove(this.engine.player.facing);
+        // Echter Schritt im Freien per GPS: Wenn Himmelsrichtung erkannt, laufe dorthin!
+        // Ansonsten laufe in die aktuelle Blickrichtung der Figur.
+        const targetDir = walkDirection ? this.screenDirToGrid(walkDirection) : this.engine.player.facing;
+        this.executeMove(targetDir);
       }
     };
 
@@ -2664,8 +2778,45 @@ class SokobanApp {
     return 'up';
   }
 
-  // Dreht die Figur nach links oder rechts (90°)
-  turnPlayer(counterClockwise = false) {
+  // Dreht die Figur bildschirmsensitiv nach links oder rechts
+  turnPlayer(direction = false) {
+    if (!this.engine || !this.engine.player) return;
+
+    if (typeof direction === 'string') {
+      const targetFacing = this.screenDirToGrid(direction);
+      this.engine.player.facing = targetFacing;
+      if (this.renderer && this.renderer.playerAnim) {
+        this.renderer.playerAnim.facing = targetFacing;
+      }
+      this.lastManualTurnTime = performance.now();
+      this.audio.playStep();
+      this.updateHudStats();
+      return;
+    }
+
+    const cur = this.engine.player.facing;
+    let newFacing = cur;
+    if (direction === false) { // Rechts
+      if (cur === 'down' || cur === 'up') newFacing = 'right';
+      else if (cur === 'right') newFacing = 'down';
+      else if (cur === 'left') newFacing = 'up';
+    } else { // Links
+      if (cur === 'down' || cur === 'up') newFacing = 'left';
+      else if (cur === 'left') newFacing = 'down';
+      else if (cur === 'right') newFacing = 'up';
+    }
+
+    this.engine.player.facing = newFacing;
+    if (this.renderer && this.renderer.playerAnim) {
+      this.renderer.playerAnim.facing = newFacing;
+    }
+    this.lastManualTurnTime = performance.now();
+    this.audio.playStep();
+    this.updateHudStats();
+  }
+
+  // Dreht die Figur relativ um 90°
+  turnPlayerRelative(counterClockwise = false) {
     if (!this.engine || !this.engine.player) return;
     const dirs = ['up', 'right', 'down', 'left'];
     const curIdx = dirs.indexOf(this.engine.player.facing);
@@ -2677,6 +2828,7 @@ class SokobanApp {
     }
     this.lastManualTurnTime = performance.now();
     this.audio.playStep();
+    this.updateHudStats();
   }
 
   // Dreht die Figur um 180° um
@@ -2692,6 +2844,7 @@ class SokobanApp {
     }
     this.lastManualTurnTime = performance.now();
     this.audio.playStep();
+    this.updateHudStats();
   }
 
   // Rotiert das gesamte Spielfeld um die Figur um 90°
@@ -2713,9 +2866,10 @@ class SokobanApp {
     }
 
     this.audio.playStep();
+    this.updateHudStats();
   }
 
-  // Tippen auf das Spielfeld: Figur drehen oder laufen
+  // Tippen auf das Spielfeld: 1-Klick Drehen & Laufen / Kiste schieben!
   handleCanvasClick(e) {
     if (this.currentScreen !== 'game' || !this.engine || !this.renderer) return;
 
@@ -2741,15 +2895,8 @@ class SokobanApp {
     }
 
     if (targetDir) {
-      if (this.engine.player.facing !== targetDir) {
-        // Erstes Antippen: Figur in diese Richtung drehen!
-        this.engine.player.facing = targetDir;
-        if (this.renderer.playerAnim) this.renderer.playerAnim.facing = targetDir;
-        this.audio.playStep();
-      } else {
-        // Zweites Antippen (schaut bereits dorthin): Schritt ausführen!
-        this.executeMove(targetDir);
-      }
+      // 1-Click: Drehen & sofort Laufen / Schieben
+      this.executeMove(this.screenDirToGrid(targetDir));
     }
   }
 
@@ -2854,6 +3001,17 @@ class SokobanApp {
   updateHudStats() {
     this.hudStepCount.textContent = this.engine.stepCount;
     this.hudPushCount.textContent = this.engine.pushCount;
+
+    const facingEl = document.getElementById('hud-facing-label');
+    if (facingEl && this.engine && this.engine.player) {
+      const facingMap = {
+        up: '⬆ Nord',
+        right: '➔ Ost',
+        down: '⬇ Süd',
+        left: '⬅ West'
+      };
+      facingEl.textContent = facingMap[this.engine.player.facing] || this.engine.player.facing;
+    }
   }
 
   // Behandelt den Sieg eines Levels
