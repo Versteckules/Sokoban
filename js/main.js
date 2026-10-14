@@ -21,11 +21,13 @@ class SokobanApp {
     this.isReviewerMode = false;
     this.creatorTapCount = 0;
     this.creatorTapTimer = null;
-    this.lastManualTurnTime = 0;
+    this.lastManualTurnTime = -999999;
+    this.lastManualHeading = null;
     this.lastCompassHeading = null;
     this.hasActiveCompass = false;
     this.lastCompassTime = 0;
     this.orientationHandler = null;
+    this.wakeLock = null;
 
     // DOM-Referenzen
     this.screens = {
@@ -196,6 +198,8 @@ class SokobanApp {
       this.btnTurnLeft.addEventListener('click', () => {
         this.requestSensorPermissions();
         this.turnPlayerRelative(true); // 90° nach links drehen
+        const dirNames = { up: 'NORD (▲)', right: 'OST (▶)', down: 'SÜD (▼)', left: 'WEST (◀)' };
+        this.showMessageToast(`🧭 Blickrichtung: ${dirNames[this.engine.player.facing] || this.engine.player.facing}`);
       });
     }
 
@@ -203,6 +207,8 @@ class SokobanApp {
       this.btnTurnRight.addEventListener('click', () => {
         this.requestSensorPermissions();
         this.turnPlayerRelative(false); // 90° nach rechts drehen
+        const dirNames = { up: 'NORD (▲)', right: 'OST (▶)', down: 'SÜD (▼)', left: 'WEST (◀)' };
+        this.showMessageToast(`🧭 Blickrichtung: ${dirNames[this.engine.player.facing] || this.engine.player.facing}`);
       });
     }
 
@@ -338,28 +344,45 @@ class SokobanApp {
     });
 
     // Reale Smartphone-Kompass-Erkennung (Drehung im Freien)
-    this.orientationHandler = (e) => {
+    let hasAbsoluteOrientation = false;
+
+    this.orientationHandler = (e, isAbsolute = false) => {
       if (this.currentScreen !== 'game' || !this.engine || !this.engine.player) return;
 
-      // Wenn der Spieler vor weniger als 2.2 Sekunden manuell gedreht hat: Kompass pausieren
-      const now = performance.now();
-      if (now - this.lastManualTurnTime < 2200) return;
-
-      let heading = null;
-      if (e.webkitCompassHeading !== undefined && e.webkitCompassHeading !== null) {
-        heading = e.webkitCompassHeading;
-      } else if (e.alpha !== null && e.alpha !== undefined) {
-        heading = (360 - e.alpha) % 360;
+      // Auf Android: Sobald deviceorientationabsolute läuft, relatives deviceorientation ignorieren!
+      if (!isAbsolute && hasAbsoluteOrientation && e.webkitCompassHeading === undefined) {
+        return;
+      }
+      if (isAbsolute) {
+        hasAbsoluteOrientation = true;
       }
 
+      const heading = this.calculateHeading(e);
       if (heading === null || isNaN(heading)) return;
+
+      const now = performance.now();
+
+      // Wenn der Spieler vor kurzem manuell gedreht hat:
+      // Hebe die manuelle Sperre sofort auf, sobald eine echte Körperdrehung von mindestens 25° stattfindet!
+      if (this.lastManualHeading !== null) {
+        const turnDiff = Math.abs(heading - this.lastManualHeading);
+        const normTurnDiff = Math.min(turnDiff, 360 - turnDiff);
+        if (normTurnDiff >= 25) {
+          this.lastManualTurnTime = -999999;
+          this.lastManualHeading = null;
+        }
+      }
+
+      if (now - this.lastManualTurnTime < 3000) return;
 
       this.hasActiveCompass = true;
       this.lastCompassTime = now;
 
-      // Zitter-Filter: Micro-Bewegungen unter 2.0 Grad dämpfen
-      if (this.lastCompassHeading !== null && Math.abs(heading - this.lastCompassHeading) < 2.0) {
-        return;
+      // Zitter-Filter: Micro-Bewegungen unter 2.5 Grad dämpfen
+      if (this.lastCompassHeading !== null) {
+        const diff = Math.abs(heading - this.lastCompassHeading);
+        const normDiff = Math.min(diff, 360 - diff);
+        if (normDiff < 2.5) return;
       }
       this.lastCompassHeading = heading;
 
@@ -376,6 +399,8 @@ class SokobanApp {
         if (this.gps) {
           this.gps.onDirectionChanged(newFacing);
         }
+        const dirNames = { up: 'NORD (▲)', right: 'OST (▶)', down: 'SÜD (▼)', left: 'WEST (◀)' };
+        this.showMessageToast(`🧭 Kompass: ${dirNames[newFacing] || newFacing}`);
       }
 
       if (this.renderer) {
@@ -383,14 +408,62 @@ class SokobanApp {
       }
     };
 
-    window.addEventListener('deviceorientation', this.orientationHandler, true);
-    window.addEventListener('deviceorientationabsolute', this.orientationHandler, true);
+    if ('ondeviceorientationabsolute' in window) {
+      window.addEventListener('deviceorientationabsolute', (e) => this.orientationHandler(e, true), true);
+    }
+    window.addEventListener('deviceorientation', (e) => this.orientationHandler(e, false), true);
 
     const enterBtn = document.getElementById('btn-enter-pyramid');
     if (enterBtn) enterBtn.addEventListener('click', () => this.requestSensorPermissions(), { once: true });
     if (this.canvas) {
       this.canvas.addEventListener('touchstart', () => this.requestSensorPermissions(), { once: true, passive: true });
     }
+
+    // WakeLock wiederherstellen, wenn der Nutzer zum Browser zurückkehrt
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && this.currentScreen === 'game') {
+        this.requestWakeLock();
+      }
+    });
+  }
+
+  // Berechnet die Himmelsrichtung (0° = Nord, 90° = Ost, 180° = Süd, 270° = West)
+  // Unterstützt iOS (webkitCompassHeading) & Android (deviceorientationabsolute mit 3D-Neigungskompensation)
+  calculateHeading(e) {
+    if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) {
+      return e.webkitCompassHeading;
+    }
+
+    if (typeof e.alpha === 'number' && !isNaN(e.alpha)) {
+      const alpha = e.alpha;
+      const beta = e.beta || 0;
+      const gamma = e.gamma || 0;
+
+      // 3D-Neigungskompensation für typische Handhaltung (gekippt um 30°-70°)
+      const degToRad = Math.PI / 180;
+      const a = alpha * degToRad;
+      const b = beta * degToRad;
+      const g = gamma * degToRad;
+
+      const cA = Math.cos(a), sA = Math.sin(a);
+      const cB = Math.cos(b), sB = Math.sin(b);
+      const cG = Math.cos(g), sG = Math.sin(g);
+
+      // Vektor der Smartphone-Oberkante projiziert auf die Horizontebene
+      // Vx = Ost-Komponente, Vy = Nord-Komponente
+      const Vx = -cA * sG - sA * sB * cG;
+      const Vy = -sA * sG + cA * sB * cG;
+
+      if (Math.abs(Vx) > 0.05 || Math.abs(Vy) > 0.05) {
+        let heading = Math.atan2(Vx, Vy) * (180 / Math.PI);
+        if (heading < 0) heading += 360;
+        return heading;
+      }
+
+      return (360 - alpha + 360) % 360;
+    }
+
+    return null;
   }
 
   // Fragt Sensor-Berechtigungen (iOS Safari) für Kompass und Pedometer-Beschleunigungsmesser ab
@@ -398,7 +471,10 @@ class SokobanApp {
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
       DeviceOrientationEvent.requestPermission().then(res => {
         if (res === 'granted' && this.orientationHandler) {
-          window.addEventListener('deviceorientation', this.orientationHandler, true);
+          if ('ondeviceorientationabsolute' in window) {
+            window.addEventListener('deviceorientationabsolute', (e) => this.orientationHandler(e, true), true);
+          }
+          window.addEventListener('deviceorientation', (e) => this.orientationHandler(e, false), true);
         }
       }).catch(() => {});
     }
@@ -444,18 +520,10 @@ class SokobanApp {
     this.gps.onStepTriggered = (bearing, distance) => {
       if (this.currentScreen === 'game' && this.engine && this.engine.player) {
         // Echter Schritt im Freien per Sensor-Fusion (Pedometer + GPS):
-        // Standard & Primär: Die aktuelle Blickrichtung des Spielers (Kompass & Tasten)
-        let targetDir = this.engine.player.facing;
-
-        // Falls kein aktiver Kompass läuft und eine signifikante GPS-Peilung vorliegt:
-        const hasCompass = this.hasActiveCompass && (performance.now() - (this.lastCompassTime || 0) < 4000);
-        if (!hasCompass && bearing !== null && bearing !== undefined) {
-          const gpsDir = this.bearingToGridDir(bearing);
-          if (gpsDir) targetDir = gpsDir;
-        }
-
-        const dirNames = { up: 'NORD', right: 'OST', down: 'SÜD', left: 'WEST' };
-        this.showMessageToast(`🚶 Schritt ausgeführt: ${dirNames[targetDir] || targetDir}`);
+        // Die Bewegung erfolgt IMMER in die sichtbare Blickrichtung des Spielers!
+        const targetDir = this.engine.player.facing;
+        const dirNames = { up: 'NORD (▲)', right: 'OST (▶)', down: 'SÜD (▼)', left: 'WEST (◀)' };
+        this.showMessageToast(`🚶 Schritt: ${dirNames[targetDir] || targetDir}`);
         this.executeMove(targetDir);
       }
     };
@@ -517,6 +585,7 @@ class SokobanApp {
         this.renderer.playerAnim.facing = targetFacing;
       }
       this.lastManualTurnTime = performance.now();
+      this.lastManualHeading = this.lastCompassHeading;
       this.audio.playStep();
       this.updateHudStats();
       if (this.gps) this.gps.onDirectionChanged(targetFacing);
@@ -538,6 +607,7 @@ class SokobanApp {
       this.renderer.playerAnim.facing = newFacing;
     }
     this.lastManualTurnTime = performance.now();
+    this.lastManualHeading = this.lastCompassHeading;
     this.audio.playStep();
     this.updateHudStats();
     if (this.gps) {
@@ -557,6 +627,7 @@ class SokobanApp {
       this.renderer.playerAnim.facing = newFacing;
     }
     this.lastManualTurnTime = performance.now();
+    this.lastManualHeading = this.lastCompassHeading;
     this.audio.playStep();
     this.updateHudStats();
     if (this.gps) {
@@ -620,18 +691,21 @@ class SokobanApp {
         // Im Reviewer-Modus: Schritt & Kiste schieben
         this.executeMove(gridDir);
       } else {
-        // Im normalen Outdoor-Modus: Nur Blick & Laterne drehen (keine Bewegung ohne echte Schritte!)
+        // Im normalen Outdoor-Modus: Blick & Laterne drehen & sofortiges Feedback
         if (this.engine.player.facing !== gridDir) {
           this.engine.player.facing = gridDir;
           if (this.renderer && this.renderer.playerAnim) {
             this.renderer.playerAnim.facing = gridDir;
           }
           this.lastManualTurnTime = performance.now();
+          this.lastManualHeading = this.lastCompassHeading;
           this.audio.playStep();
           this.updateHudStats();
           if (this.gps) {
             this.gps.onDirectionChanged(gridDir);
           }
+          const dirNames = { up: 'NORD (▲)', right: 'OST (▶)', down: 'SÜD (▼)', left: 'WEST (◀)' };
+          this.showMessageToast(`🧭 Blickrichtung: ${dirNames[gridDir] || gridDir}`);
         }
       }
     }
@@ -651,8 +725,10 @@ class SokobanApp {
     if (screenName === 'game') {
       this.renderer.handleResize();
       this.gps.startTracking();
+      this.requestWakeLock();
     } else {
       this.gps.stopTracking();
+      this.releaseWakeLock();
     }
   }
 
@@ -942,6 +1018,27 @@ class SokobanApp {
     this.toastTimer = setTimeout(() => {
       toast.style.opacity = '0';
     }, 2400);
+  }
+
+  // Screen Wake Lock API (Verhindert Abschalten des Displays im Freien)
+  async requestWakeLock() {
+    if ('wakeLock' in navigator && !this.wakeLock) {
+      try {
+        this.wakeLock = await navigator.wakeLock.request('screen');
+        this.wakeLock.addEventListener('release', () => {
+          this.wakeLock = null;
+        });
+      } catch (e) {
+        // Ignorieren falls vom Betriebssystem abgelehnt (z.B. extremer Energiesparmodus)
+      }
+    }
+  }
+
+  releaseWakeLock() {
+    if (this.wakeLock) {
+      this.wakeLock.release().catch(() => {});
+      this.wakeLock = null;
+    }
   }
 
   // 60 FPS Animations-Schleife

@@ -15,23 +15,21 @@ export class GpsEngine {
     // Referenzpunkt für Schritt-Erkennung
     this.stepOriginCoord = null;
     this.prevStepCoord = null;
-    this.lastCoord = null;
 
-    // Distanz-Tracking
+    // Live-Gehdistanz zum Referenzpunkt
     this.currentWalkDistance = 0;
-    this.accumulatedDistance = 0;
 
-    // Schritt-Schwelle: 1.8 Meter echte Ortsveränderung oder 3 echte Pedometer-Schritte
-    this.stepThresholdMeters = options.stepThreshold || 1.8;
-    this.targetMotionSteps = options.targetMotionSteps || 3;
+    // Schritt-Schwelle: 1.5 Meter echte räumliche Verdrängung (ca. 2-3 Schritte)
+    this.stepThresholdMeters = options.stepThreshold || 1.5;
 
-    // Cooldown gegen Doppelschritte (750ms für geschmeidige Reaktion)
+    // Cooldown gegen Doppelschritte (1200ms für absolute Stabilität & Schutz vor Geisterschritten)
     this.lastStepTime = -10000;
-    this.stepCooldownMs = 750;
+    this.stepCooldownMs = 1200;
 
     // Schrittzähler über Pedometer / Accelerometer (DeviceMotion)
     this.motionStepsCount = 0;
     this.lastMotionPeakTime = 0;
+    this.lastMotionReceivedTime = 0;
     this.isMotionListening = false;
     this.motionHandler = null;
     this.gravityFilter = 9.81;
@@ -55,10 +53,7 @@ export class GpsEngine {
     if (this.isTracking) return true;
     this.isTracking = true;
     this.stepOriginCoord = null;
-    this.lastCoord = null;
-    this.prevStepCoord = null;
     this.currentWalkDistance = 0;
-    this.accumulatedDistance = 0;
     this.motionStepsCount = 0;
 
     if ('geolocation' in navigator) {
@@ -92,10 +87,7 @@ export class GpsEngine {
     }
     this.isTracking = false;
     this.stepOriginCoord = null;
-    this.lastCoord = null;
-    this.prevStepCoord = null;
     this.currentWalkDistance = 0;
-    this.accumulatedDistance = 0;
     this.stopMotionStepSensor();
     this.setStatus('idle', 'Pausiert');
   }
@@ -125,29 +117,29 @@ export class GpsEngine {
     if (!acc) return;
 
     let dynamicMag = 0;
-    // 1. Wenn acceleration ohne Gravitation vorliegt (Android & manche iOS Versionen)
     if (e.acceleration && e.acceleration.x !== null && (e.acceleration.x !== 0 || e.acceleration.y !== 0 || e.acceleration.z !== 0)) {
       const ax = acc.x || 0;
       const ay = acc.y || 0;
       const az = acc.z || 0;
       dynamicMag = Math.sqrt(ax * ax + ay * ay + az * az);
+      this.lastMotionReceivedTime = performance.now();
     } else if (e.accelerationIncludingGravity) {
-      // 2. Gravitations-Filterung (Tiefpassfilter zur Erdanziehungs-Trennung)
       const gx = acc.x || 0;
       const gy = acc.y || 0;
       const gz = acc.z || 0;
       const rawMag = Math.sqrt(gx * gx + gy * gy + gz * gz);
       this.gravityFilter = 0.88 * this.gravityFilter + 0.12 * rawMag;
       dynamicMag = Math.abs(rawMag - this.gravityFilter);
+      this.lastMotionReceivedTime = performance.now();
     }
 
     const now = performance.now();
 
     // Schritt-Erkennung:
-    // Beim Gehen mit Smartphone in der Hand (Blick aufs Display) liegt die dynamische Beschleunigung bei ca. 1.15 bis 2.8 m/s²
-    // Kadenz: Minimal 300ms (schneller Schritt) bis maximal 1800ms
-    if (dynamicMag >= 1.20 && (now - this.lastMotionPeakTime >= 300)) {
-      // Wenn letzter Schritt länger als 2500ms her ist, fängt eine neue Geh-Sequenz an
+    // Dynamische Beschleunigung beim echten Gehen mit Handy in der Hand: ca. 1.25 bis 3.0 m/s²
+    // Mindest-Intervall 340ms, Maximal-Intervall 1800ms
+    if (dynamicMag >= 1.25 && (now - this.lastMotionPeakTime >= 340)) {
+      // Wenn der letzte Schritt mehr als 2.5 Sekunden her ist: Neuer Schritt-Zyklus
       if (now - this.lastMotionPeakTime > 2500 && this.motionStepsCount > 0) {
         this.motionStepsCount = 0;
       }
@@ -173,42 +165,26 @@ export class GpsEngine {
     // Erster GPS-Fix: Als Ausgangspunkt setzen
     if (!this.stepOriginCoord) {
       this.stepOriginCoord = { lat: currentLat, lon: currentLon };
-      this.lastCoord = { lat: currentLat, lon: currentLon };
       this.updateStatusDisplay();
       if (this.onLocationUpdate) this.onLocationUpdate(pos, 0);
       return;
     }
 
-    // Inkrementelle Distanz seit letztem GPS-Punkt (akkumulierte Bewegung)
-    if (this.lastCoord) {
-      const delta = this.haversineMeters(this.lastCoord.lat, this.lastCoord.lon, currentLat, currentLon);
-      // Filter gegen GPS-Standstill-Noise (unter 0.25m ist Jitter, über 35m ist Satelliten-Sprung)
-      if (delta >= 0.25 && delta <= 35 && this.accuracy <= 50) {
-        this.accumulatedDistance += delta;
-        this.lastCoord = { lat: currentLat, lon: currentLon };
-      }
-    } else {
-      this.lastCoord = { lat: currentLat, lon: currentLon };
-    }
-
-    // Radialer Abstand zum Referenzpunkt
+    // Echte radiale Verdrängung vom Referenzpunkt in Metern berechnen
+    // (WICHTIG: Keine Summierung von Rausch-Deltas im Stillstand -> 100% Geisterschritt-Schutz!)
     const distFromOrigin = this.haversineMeters(
       this.stepOriginCoord.lat,
       this.stepOriginCoord.lon,
       currentLat,
       currentLon
     );
-
-    // Gesamte effektive Gehdistanz für diesen Schritt
-    this.currentWalkDistance = Math.max(distFromOrigin, this.accumulatedDistance);
+    this.currentWalkDistance = distFromOrigin;
 
     this.updateStatusDisplay();
 
-    // Satelliten-Sprung abfangen (> 45m)
-    if (distFromOrigin >= 45) {
+    // Satelliten-Sprung abfangen (> 40m)
+    if (distFromOrigin >= 40) {
       this.stepOriginCoord = { lat: currentLat, lon: currentLon };
-      this.lastCoord = { lat: currentLat, lon: currentLon };
-      this.accumulatedDistance = 0;
       this.motionStepsCount = 0;
       return;
     }
@@ -221,30 +197,45 @@ export class GpsEngine {
     }
   }
 
-  // Prüft alle Schritt-Trigger-Bedingungen (Sensor-Fusion)
+  // Prüft alle Schritt-Trigger-Bedingungen (Sensor-Fusion ohne Geisterschritte)
   checkStepTrigger() {
     const now = performance.now();
     if (now - this.lastStepTime < this.stepCooldownMs) return;
 
     const currentDist = this.currentWalkDistance;
     const speed = (this.lastPosition && this.lastPosition.coords && this.lastPosition.coords.speed) || 0;
-    const hasOutdoorGps = this.accuracy <= 45;
+    const hasOutdoorGps = this.accuracy <= 55;
 
-    // BEDINGUNGEN FÜR SCHRITT-AUSLÖSUNG (Sensor-Fusion):
-    // 1. Pedometer-Kombination: 3 echte Schritte & GPS bestätigt Bewegung draußen (mind. 0.6m ODER Speed > 0.2m/s ODER frisches GPS-Signal)
-    // 2. Reine GPS-Distanz: Mindestens 1.8 Meter Ortsveränderung bei akzeptabler GPS-Genauigkeit (falls Pedometer inaktiv)
-    // 3. Pedometer-Outdoor-Fallback: 4 Schritte bei aktivem GPS-Fix (auch wenn GPS kurz träge aktualisiert)
-    const conditionPedometerGps = (this.motionStepsCount >= this.targetMotionSteps) && 
-                                  hasOutdoorGps && 
-                                  (currentDist >= 0.6 || speed >= 0.25 || (now - this.lastGpsTimestamp < 8000));
+    // Prüfe ob der Bewegungssensor aktiv Daten liefert (z.B. Smartphone in der Hand)
+    const isMotionStreaming = this.isMotionListening && (now - this.lastMotionReceivedTime < 3500);
 
-    const conditionGpsDistance = (currentDist >= this.stepThresholdMeters) && 
-                                 currentDist < 45 && 
-                                 hasOutdoorGps;
+    let isStepTriggered = false;
 
-    const conditionMotionFallback = (this.motionStepsCount >= 4) && hasOutdoorGps;
+    if (isMotionStreaming) {
+      // SENSOR-FUSION (Smartphone im Freien):
+      // 100% SCHUTZ VOR GEISTERSCHRITTEN IM STILLSTAND!
+      // Der Spieler MUSS physische Schritte gegangen sein (mind. 2 Schritte = ca. 1.5m)
+      // UND GPS bestätigt echte räumliche Verdrängung (Distanz >= 0.8m ODER Speed >= 0.22 m/s):
+      const conditionWalkingPedometer = (this.motionStepsCount >= 2) && 
+                                        hasOutdoorGps && 
+                                        (currentDist >= 0.8 || speed >= 0.22 || currentDist >= 1.25);
 
-    if (conditionPedometerGps || conditionGpsDistance || conditionMotionFallback) {
+      // Zügige Fortbewegung (z.B. schneller Ausfallschritt >= 2.5m mit mind. 1 Schritt-Impuls)
+      const conditionFastStride = (currentDist >= 2.5) && (this.motionStepsCount >= 1) && hasOutdoorGps;
+
+      isStepTriggered = conditionWalkingPedometer || conditionFastStride;
+    } else {
+      // FALLBACK NUR WENN KEIN BEWEGUNGSSENSOR VORHANDEN ODER BLOCKIERT:
+      // (z.B. Desktop/Browser oder Sensor-Berechtigung verweigert)
+      const conditionGpsFallback = (currentDist >= this.stepThresholdMeters) && 
+                                   (currentDist < 40) && 
+                                   hasOutdoorGps && 
+                                   (speed >= 0.25 || currentDist >= 2.0);
+
+      isStepTriggered = conditionGpsFallback;
+    }
+
+    if (isStepTriggered) {
       this.lastStepTime = now;
       const walkDist = currentDist;
 
@@ -252,16 +243,13 @@ export class GpsEngine {
       if (this.stepOriginCoord && this.lastPosition) {
         const curLat = this.lastPosition.coords.latitude;
         const curLon = this.lastPosition.coords.longitude;
-        // Peilung nur berechnen, wenn echte räumliche Distanz vorliegt (mind. 1.0m)
-        const radialDist = this.haversineMeters(this.stepOriginCoord.lat, this.stepOriginCoord.lon, curLat, curLon);
-        if (radialDist >= 1.0) {
+        if (currentDist >= 1.0) {
           bearing = this.calculateBearing(this.stepOriginCoord.lat, this.stepOriginCoord.lon, curLat, curLon);
         }
       }
 
-      // Referenzpunkte & Zähler für nächsten Schritt zurücksetzen
+      // Referenzpunkt für den nächsten Schritt auf die aktuelle Position setzen
       this.motionStepsCount = 0;
-      this.accumulatedDistance = 0;
       this.currentWalkDistance = 0;
       if (this.lastPosition) {
         this.prevStepCoord = this.stepOriginCoord ? { ...this.stepOriginCoord } : null;
@@ -269,7 +257,6 @@ export class GpsEngine {
           lat: this.lastPosition.coords.latitude,
           lon: this.lastPosition.coords.longitude
         };
-        this.lastCoord = { ...this.stepOriginCoord };
       }
 
       this.triggerHaptic(50);
@@ -281,27 +268,23 @@ export class GpsEngine {
     }
   }
 
-  // Wird aufgerufen, wenn der Spieler die Richtung wechselt (Kompass oder Tasten)
+  // Wird aufgerufen, wenn der Spieler die Richtung wechselt (Kompass, Bildschirm-Tap oder Buttons)
   onDirectionChanged(newFacing) {
     if (this.currentFacing === newFacing) return;
     this.currentFacing = newFacing;
 
-    // Bei Richtungswechsel sofort den Schritt-Ursprung und Pedometer-Zwischenstand neu kalibrieren!
-    // Dadurch wird verhindert, dass vergangene Wegstrecken aus der alten Richtung
-    // die neue Richtung verfälschen oder Schritte "schlucken".
+    // Sofortiger Reset des Referenzpunkts auf die aktuelle Position:
+    // Verhindert Altlasten aus der alten Richtung und ermöglicht sofortiges Vorwärtsgehen!
     if (this.lastPosition) {
       this.stepOriginCoord = {
         lat: this.lastPosition.coords.latitude,
         lon: this.lastPosition.coords.longitude
       };
-      this.lastCoord = { ...this.stepOriginCoord };
     }
     this.motionStepsCount = 0;
-    this.accumulatedDistance = 0;
     this.currentWalkDistance = 0;
 
-    // Kurzer haptischer Puls als Bestätigung des Richtungswechsels (15ms)
-    this.triggerHaptic(15);
+    this.triggerHaptic(20);
     this.updateStatusDisplay();
   }
 
@@ -312,13 +295,10 @@ export class GpsEngine {
         lat: this.lastPosition.coords.latitude,
         lon: this.lastPosition.coords.longitude
       };
-      this.lastCoord = { ...this.stepOriginCoord };
     } else {
       this.stepOriginCoord = null;
-      this.lastCoord = null;
     }
     this.currentWalkDistance = 0;
-    this.accumulatedDistance = 0;
     this.motionStepsCount = 0;
     this.updateStatusDisplay();
   }
@@ -328,15 +308,15 @@ export class GpsEngine {
     const dirNames = { up: 'NORD', right: 'OST', down: 'SÜD', left: 'WEST' };
     const facingText = dirNames[this.currentFacing] || '';
 
-    const distInfo = `${this.currentWalkDistance.toFixed(1)}m`;
-    const stepsInfo = this.motionStepsCount > 0 ? `Schritt ${this.motionStepsCount}/${this.targetMotionSteps}` : `${distInfo}`;
+    const distInfo = `${this.currentWalkDistance.toFixed(1)}m / ${this.stepThresholdMeters}m`;
+    const stepsInfo = this.motionStepsCount > 0 ? `Schritt ${this.motionStepsCount}/3 (${this.currentWalkDistance.toFixed(1)}m)` : distInfo;
 
     if (this.accuracy <= 25) {
       this.setStatus('locked', `GPS aktiv (±${Math.round(this.accuracy)}m) | 🚶 ${stepsInfo} [${facingText}]`);
-    } else if (this.accuracy <= 45) {
+    } else if (this.accuracy <= 55) {
       this.setStatus('searching', `GPS (±${Math.round(this.accuracy)}m) | 🚶 ${stepsInfo} [${facingText}]`);
     } else {
-      this.setStatus('searching', `GPS sucht Signal (±${Math.round(this.accuracy)}m)`);
+      this.setStatus('searching', `GPS Signal schwach (±${Math.round(this.accuracy)}m) | [${facingText}]`);
     }
   }
 

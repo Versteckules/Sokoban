@@ -386,6 +386,9 @@ export class SokobanRenderer {
     this.renderAmbientParticles();
 
     this.ctx.restore();
+
+    // 14. Antike Kompass-Rose oben rechts (zeigt immer echtes Nord & Feldausrichtung)
+    this.renderCompassRose();
   }
 
   // Zeichnet den stimmungsvollen Hintergrund der Kammer
@@ -1012,7 +1015,7 @@ export class SokobanRenderer {
 
     // N-Buchstabe
     ctx.fillStyle = '#fca5a5';
-    ctx.font = 'bold 9px var(--font-mono, monospace)';
+    ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillText('N', 0, -r + 4);
