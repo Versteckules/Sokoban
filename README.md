@@ -18,11 +18,14 @@ Ein audiovisuelles Geocaching-Erlebnis für Smartphone, Tablet und Desktop: 15 m
    - **Tier 5 (Apex-Spitze – 1 Level):** Obsidian / Magma (`#ff3b30`, Glüh-Akzent `#ff8c00`) – Extrem
    - **Freischalt-Logik:** Ein Stein der oberen Reihe öffnet sich erst, wenn **beide Fundamentsteine darunter** bezwungen wurden!
 
-2. **Outdoor-Modus (GPS & Schritt-Erkennung):**
-   - **Blickrichtung & Laufen:** Die Figur läuft genau in die Richtung, in die sie schaut.
-   - **Spielfeld um sich drehen:** Mit dem Button **„🔄 Feld drehen“** drehst du das Spielfeld um dich herum (in 90°-Schritten), um freie Laufwege im Gelände optimal zu nutzen.
-   - **Blickrichtung ändern:** Über die Dreh-Buttons (**„↺ Links“** / **„↻ Rechts“**) oder durch Antippen auf das Spielfeld bestimmst du, wohin der Abenteurer blickt.
-   - **Reale Bewegung:** Durch echtes Gehen im Freien (GPS-Distanz & Schritt-Sensor) steuerst du den Abenteurer vorwärts und schiebst Steinblöcke.
+2. **Outdoor-Modus (Dual Sensor-Fusion: Kompass + Pedometer + GPS):**
+   - **Live-Drehung per Smartphone-Kompass:** Wohin du beim Start (oder beim Tippen auf **„🎯 Hier verankern“**) schaust, ist automatisch **„Oben (▲)“** auf dem Spielfeld. Drehst du dich mit dem Handy um dich selbst, dreht sich die Spielfigur live mit dir!
+   - **Reales Vorwärtslaufen (Pedometer + GPS):** Läufst du in deine aktuelle Blickrichtung los, bewegt sich die Figur zuverlässig nach vorne – ausgelöst durch echte Schritte (Pedometer via `devicemotion`) oder ab 50% der Kachelgröße per GPS (Standard: `2.0m`).
+   - **Live Sensor-Telemetrie:** Ein Live-Banner unter dem Spielfeld zeigt dir in Echtzeit deine aktuelle Blickrichtung (`🧭 Blick & Lauf: NORD (⬆)`), die gelaufene Distanz (`🚶 1.5m / 2.0m`), deinen Bewegungszustand (`🛑 Stillstand` / `🚶 In Bewegung`) und die Satellitengenauigkeit an.
+   - **Spielfeld um sich drehen:** Mit **„🔄 Feld drehen (0° / 90° / 180° / 270°)“** drehst du das Raster so, dass die Korridore genau entlang deiner freien Wiese oder deines Weges verlaufen.
+   - **Hier verankern:** Mit **„🎯 Hier verankern“** setzt du deine aktuelle GPS-Position als Mittelpunkt der Kachel und richtest deine aktuelle Blickrichtung neu als **„Oben (▲)“** aus.
+   - **Kachelgröße wählbar:** Mit **„📏 Kachelgröße (3m / 4m / 5m)“** wählst du den Maßstab des Spielfelds (Schrittschwelle bei 50%: `1.5m` / `2.0m` / `2.5m`).
+   - **100% Geisterschritt-Schutz:** Der Beschleunigungssensor und die Dreh-Sperre verhindern zuverlässig Geisterzüge im Stehen oder beim bloßen Drehen am Platz.
 
 3. **Geocaching Zero-Knowledge Kryptotresor:**
    - Die Finalkoordinaten sind mit **256-Bit AES-GCM** verschlüsselt.
@@ -30,8 +33,8 @@ Ein audiovisuelles Geocaching-Erlebnis für Smartphone, Tablet und Desktop: 15 m
    - Selbst durch Quellcode-Inspektion in der Browser-Konsole können die Koordinaten nicht vorab ausgelesen werden.
 
 4. **Reviewer- & PC-Modus:**
-   - Aktivierbar über `?mode=reviewer` an der URL oder durch **5x schnelles Antippen** des Schriftzugs *„Made by versteckules“*.
-   - Schaltet die Tastatursteuerung (WASD / Pfeiltasten, Z = Undo, R = Reset) und das virtuelle Touch D-Pad frei.
+   - Aktivierbar über `?mode=reviewer` an der URL oder durch **10x schnelles Antippen** des Hauptbildes auf der Startseite.
+   - Schaltet die Tastatursteuerung (WASD / Pfeiltasten, Leertaste = Vorwärts, Z = Undo, R = Reset) und das virtuelle Touch D-Pad frei.
 
 ---
 

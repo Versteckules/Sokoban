@@ -118,10 +118,36 @@ body {
   color: #34d399;
 }
 
+.pill-gps.locked,
+.pill-gps.ready {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: #10b981;
+  color: #34d399;
+}
+
+.pill-gps.calibrating {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: #38bdf8;
+  color: #38bdf8;
+}
+
 .pill-gps.searching {
   background: rgba(245, 158, 11, 0.15);
   border-color: rgba(245, 158, 11, 0.4);
   color: #fbbf24;
+}
+
+.pill-gps.weak {
+  background: rgba(245, 158, 11, 0.2);
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+
+.pill-gps.denied,
+.pill-gps.error {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+  color: #f87171;
 }
 
 .pulse-dot {
@@ -1131,10 +1157,12 @@ body {
   padding: 30px;
   max-width: 520px;
   width: 100%;
+  max-height: 90vh;
+  max-height: 90dvh;
+  overflow-y: auto;
   box-shadow: 0 25px 60px rgba(0, 0, 0, 0.9), 0 0 50px rgba(245, 158, 11, 0.15);
   text-align: center;
   position: relative;
-  overflow: hidden;
 }
 
 .modal-title {
@@ -1243,6 +1271,8 @@ body {
   font-weight: 800;
   color: #fef08a;
   letter-spacing: 1px;
+  user-select: all;
+  -webkit-user-select: all;
 }
 
 .btn-copy {
@@ -1506,6 +1536,11 @@ body {
 
 /* SMARTPHONES (< 640px) */
 @media (max-width: 640px) {
+  #app-viewport {
+    padding-top: 50px;
+    min-height: calc(100vh - 50px);
+    min-height: calc(100dvh - 50px);
+  }
   #global-header {
     padding: 0 10px;
     height: 50px;
@@ -1593,7 +1628,7 @@ body {
   }
 
   /* Gameplay Arena auf Smartphones: Kein Scrollen nötig! */
-  #game-screen {
+  #game-screen.active {
     padding: 6px 6px calc(8px + env(safe-area-inset-bottom, 0));
     height: calc(100vh - 50px);
     height: calc(100dvh - 50px);
@@ -1644,9 +1679,29 @@ body {
   /* Canvas füllt automatisch den mittleren Bereich */
   .canvas-wrapper {
     flex: 1;
-    min-height: 210px;
+    min-height: 200px;
     height: auto;
     border-radius: 12px;
+  }
+
+  /* GPS Live Banner auf Smartphones */
+  .gps-nav-banner {
+    padding: 6px 10px;
+    gap: 6px;
+    border-radius: 10px;
+  }
+  .nav-target-label {
+    font-size: 9px;
+  }
+  .nav-target-val {
+    font-size: 12px;
+  }
+  .nav-telemetry-col {
+    gap: 8px;
+    font-size: 10px;
+  }
+  .nav-walk-info {
+    font-size: 10.5px;
   }
 
   /* Game Controls auf Smartphones: Daumen-optimiert */
@@ -1728,7 +1783,7 @@ body {
     display: block;
     font-size: 9.5px;
   }
-  #game-screen {
+  #game-screen.active {
     padding: 10px 16px;
     height: calc(100vh - 56px);
     height: calc(100dvh - 56px);

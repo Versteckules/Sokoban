@@ -25,6 +25,9 @@ export class AudioManager {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (AudioCtx) {
         this.ctx = new AudioCtx();
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume().catch(() => {});
+        }
       }
       this.initMusic();
       this.isInitialized = true;
@@ -34,14 +37,20 @@ export class AudioManager {
   }
 
   initMusic() {
-    this.musicElement = new Audio('assets/music.mp3');
-    this.musicElement.loop = true;
-    this.musicElement.volume = 0.40;
-
-    // Falls keine eigene assets/music.mp3 existiert, bleibt der Hintergrund ruhig (kein nerviges Synthesizer-Brummen)
-    this.musicElement.addEventListener('error', () => {
-      // Ruhiger Hintergrund, nur Soundeffekte aktiv
-    });
+    try {
+      this.musicElement = new Audio('assets/music.mp3');
+      this.musicElement.loop = true;
+      this.musicElement.volume = 0.40;
+      this.musicElement.addEventListener('error', () => {
+        // Falls keine eigene assets/music.mp3 existiert: sanfter Web Audio Synthesizer-Hintergrund
+        this.musicElement = null;
+        if (this.isMusicPlaying && !this.isMuted) {
+          this.startAmbientDrone();
+        }
+      });
+    } catch (e) {
+      this.musicElement = null;
+    }
   }
 
   startMusic() {
@@ -52,9 +61,15 @@ export class AudioManager {
       const playPromise = this.musicElement.play();
       if (playPromise !== undefined) {
         playPromise.catch(() => {
-          // Keine Musikdatei vorhanden oder Autoplay blockiert: Ruhig bleiben
+          // Autoplay blockiert oder Datei fehlt -> Fallback auf Ambient Drone
+          this.musicElement = null;
+          if (this.isMusicPlaying && !this.isMuted) {
+            this.startAmbientDrone();
+          }
         });
       }
+    } else {
+      this.startAmbientDrone();
     }
   }
 
@@ -63,31 +78,86 @@ export class AudioManager {
     if (this.musicElement) {
       this.musicElement.pause();
     }
+    this.stopAmbientDrone();
   }
 
   toggleMute() {
     this.isMuted = !this.isMuted;
     if (this.isMuted) {
       if (this.musicElement) this.musicElement.pause();
+      this.stopAmbientDrone();
     } else {
-      if (this.isMusicPlaying && this.musicElement) {
-        this.musicElement.play().catch(() => {});
+      if (this.isMusicPlaying) {
+        if (this.musicElement) {
+          this.musicElement.play().catch(() => {});
+        } else {
+          this.startAmbientDrone();
+        }
       }
     }
     return this.isMuted;
   }
 
+  // Sanfter, beruhigender D-Moll Tempel-Ambient-Klangteppich
   startAmbientDrone() {
-    // Deaktiviert: Kein nerviges 55Hz Synthesizer-Brummen
+    if (this.isMuted || !this.ctx || this.ambientGain) return;
+    try {
+      this.ensureActive();
+      const now = this.ctx.currentTime;
+      this.ambientGain = this.ctx.createGain();
+      this.ambientGain.gain.setValueAtTime(0.001, now);
+      this.ambientGain.gain.linearRampToValueAtTime(0.04, now + 3);
+      this.ambientGain.connect(this.ctx.destination);
+
+      // Mystischer D-Moll Akkord (D3 = 146.8Hz, A3 = 220Hz, D4 = 293.6Hz)
+      const freqs = [146.83, 220.00, 293.66];
+      this.ambientOscillators = freqs.map((freq, i) => {
+        const osc = this.ctx.createOscillator();
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 280;
+
+        osc.type = 'sine';
+        osc.frequency.value = freq + (i === 1 ? 0.3 : -0.2);
+        osc.connect(filter);
+        filter.connect(this.ambientGain);
+        osc.start(now);
+        return osc;
+      });
+    } catch (e) {}
   }
 
   stopAmbientDrone() {
-    // Deaktiviert
+    if (this.ambientGain && this.ctx) {
+      try {
+        const now = this.ctx.currentTime;
+        this.ambientGain.gain.linearRampToValueAtTime(0.001, now + 0.5);
+        const oscs = this.ambientOscillators;
+        const gain = this.ambientGain;
+        this.ambientOscillators = [];
+        this.ambientGain = null;
+        setTimeout(() => {
+          oscs.forEach(osc => {
+            try { osc.stop(); osc.disconnect(); } catch (e) {}
+          });
+          if (gain) {
+            try { gain.disconnect(); } catch (e) {}
+          }
+        }, 600);
+      } catch (e) {}
+    }
+  }
+
+  ensureActive() {
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
   }
 
   // Soundeffekt: Leiser Schritt auf Steinplatten
   playStep() {
     if (this.isMuted || !this.ctx) return;
+    this.ensureActive();
     try {
       const now = this.ctx.currentTime;
       const osc = this.ctx.createOscillator();
@@ -110,6 +180,7 @@ export class AudioManager {
   // Soundeffekt: Schweres Kistenschleifen (Stein auf Stein Reibung)
   playPush() {
     if (this.isMuted || !this.ctx) return;
+    this.ensureActive();
     try {
       const now = this.ctx.currentTime;
       // Rauschen für Schleifgeräusch
@@ -156,6 +227,7 @@ export class AudioManager {
   // Soundeffekt: Stoß gegen Wand / Blockade
   playBump() {
     if (this.isMuted || !this.ctx) return;
+    this.ensureActive();
     try {
       const now = this.ctx.currentTime;
       const osc = this.ctx.createOscillator();
@@ -178,6 +250,7 @@ export class AudioManager {
   // Soundeffekt: Zug rückgängig (Undo)
   playUndo() {
     if (this.isMuted || !this.ctx) return;
+    this.ensureActive();
     try {
       const now = this.ctx.currentTime;
       const osc = this.ctx.createOscillator();
@@ -200,6 +273,7 @@ export class AudioManager {
   // Soundeffekt: Kiste erreicht Zielfeld (magisches Leuchten)
   playBoxOnGoal() {
     if (this.isMuted || !this.ctx) return;
+    this.ensureActive();
     try {
       const now = this.ctx.currentTime;
       const osc = this.ctx.createOscillator();
@@ -222,6 +296,7 @@ export class AudioManager {
   // Soundeffekt: Triumphale Level-Sieg-Akkorde (Pyramiden-Harmonie)
   playWin() {
     if (this.isMuted || !this.ctx) return;
+    this.ensureActive();
     try {
       const now = this.ctx.currentTime;
       const notes = [293.66, 369.99, 440.00, 587.33]; // D, F#, A, D
@@ -247,6 +322,7 @@ export class AudioManager {
   // Soundeffekt: Geheime Reviewer-Modus-Aktivierung
   playSecretUnlock() {
     if (this.isMuted || !this.ctx) return;
+    this.ensureActive();
     try {
       const now = this.ctx.currentTime;
       const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6

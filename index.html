@@ -6,6 +6,13 @@
   <title>Sokoban: Das Geheimnis der Pyramide | Geocaching Edition</title>
   <meta name="description" content="15-Level Sokoban Geocaching Outdoor Puzzle von versteckules. Löse die Pyramide per GPS und finde das Final!">
 
+  <meta name="theme-color" content="#0a0910">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Sokoban Pyramide">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏛️</text></svg>">
+
   <!-- Google Fonts: Cinzel für epische Mystik & Inter für saubere Lesbarkeit -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -165,23 +172,36 @@
           <canvas id="sokoban-canvas"></canvas>
         </div>
 
+        <!-- LIVE GPS WEGWEISER & STATUS-BANNER -->
+        <div class="gps-nav-banner" id="gps-nav-banner">
+          <div class="nav-target-col">
+            <span class="nav-target-label">SENSOR LIVE:</span>
+            <span id="nav-target-val" class="nav-target-val">🧭 Blick &amp; Lauf: NORD (⬆)</span>
+          </div>
+          <div class="nav-telemetry-col">
+            <span id="nav-walk-info" class="nav-walk-info">🚶 0.0m / 2.0m</span>
+            <span id="nav-motion-status" class="gps-anchor-badge">🛑 Stillstand</span>
+            <span id="nav-accuracy-info" class="gps-dist-indicator">±--m</span>
+          </div>
+        </div>
+
         <!-- SPIEL-STEUERUNG (SCHLANK & INTUITIV) -->
         <div class="game-control-bar" id="game-control-bar">
-          <button id="btn-turn-left" class="btn-ctrl btn-turn" title="Blick nach links drehen (◀)">
-            <span class="ctrl-icon">◀</span>
-            <span class="ctrl-label">Links</span>
-          </button>
-          <button id="btn-step-forward" class="btn-ctrl btn-step btn-primary btn-glow" title="Startpunkt hier auf deine GPS-Position verankern (🎯)">
+          <button id="btn-step-forward" class="btn-ctrl btn-step btn-primary btn-glow" title="Startpunkt hier auf deine aktuelle GPS-Position setzen (🎯)">
             <span class="ctrl-icon" id="step-btn-icon">🎯</span>
             <span class="ctrl-label" id="step-btn-label">Hier verankern</span>
           </button>
-          <button id="btn-turn-right" class="btn-ctrl btn-turn" title="Blick nach rechts drehen (▶)">
-            <span class="ctrl-icon">▶</span>
-            <span class="ctrl-label">Rechts</span>
-          </button>
-          <button id="btn-rotate-field" class="btn-ctrl btn-rotate" title="Spielfeld um sich drehen (90°)">
+          <button id="btn-rotate-field" class="btn-ctrl btn-rotate" title="Spielfeld um 90° drehen">
             <span class="ctrl-icon">🔄</span>
             <span class="ctrl-label">Feld drehen (<span id="rotation-val">0°</span>)</span>
+          </button>
+          <button id="btn-tilesize" class="btn-ctrl btn-turn" title="Kachelgröße umschalten (3m / 4m / 5m)">
+            <span class="ctrl-icon">📏</span>
+            <span class="ctrl-label">Kachel: <span id="tilesize-val">4m</span></span>
+          </button>
+          <button id="btn-gps-help" class="btn-ctrl btn-turn" title="Hilfe & GPS-Anleitung öffnen">
+            <span class="ctrl-icon">❓</span>
+            <span class="ctrl-label">Hilfe</span>
           </button>
         </div>
 
@@ -247,7 +267,7 @@
       <div class="coordinates-plate">
         <span class="coord-label">FINAL-KOORDINATEN</span>
         <div class="coord-value-row">
-          <span id="final-coordinates-text" class="coord-digits">N 50° 16.782 E 011° 55.430</span>
+          <span id="final-coordinates-text" class="coord-digits">🔒 VERSIEGELT (AES-256)</span>
           <button id="btn-copy-coords" class="btn-copy" title="Koordinaten kopieren">📋 Kopieren</button>
         </div>
         <div id="copy-feedback" class="copy-feedback">In Zwischenablage kopiert!</div>
@@ -255,7 +275,7 @@
 
       <div class="hint-plate" id="hint-plate">
         <span class="hint-label">HINWEIS / SPOILER:</span>
-        <p id="final-hint-text" class="hint-text">Das Geheimnis ruht am Fuß der alten Steinstele im Moosversteck.</p>
+        <p id="final-hint-text" class="hint-text">Löse alle 15 Stufen der Pyramide, um das Koordinaten-Siegel zu brechen.</p>
       </div>
 
       <div class="vault-creator-note">
@@ -288,9 +308,9 @@
             <strong>Wofür ist „Hier verankern“?</strong>
           </div>
           <div class="faq-card-body">
-            Setzt den Startpunkt des Spielfelds dorthin, wo du <strong>im Moment im echten Leben stehst</strong>.
+            Setzt den Startpunkt des Spielfelds dorthin, wo du <strong>im Moment im echten Leben stehst</strong>, und kalibriert deine aktuelle Blickrichtung automatisch als <strong>„Oben (⬆)“</strong> auf dem Bildschirm.
             <div class="faq-tip">
-              💡 <strong>Praxis-Tipp:</strong> Kommst du beim Laufen an den Rand der Wiese, an einen Zaun oder an einen Busch? Gehe einfach ein paar Meter zurück in die freie Mitte und tippe erneut auf <strong>„Hier verankern“</strong>. Das Spielfeld zentriert sich sofort neu um dich, ohne deinen Zug-Fortschritt zu verlieren!
+              💡 <strong>Praxis-Tipp:</strong> Kommst du beim Laufen an den Rand der Wiese, an einen Zaun oder an einen Busch? Gehe einfach ein paar Meter zurück in die freie Mitte, schaue in Richtung der freien Fläche und tippe erneut auf <strong>„Hier verankern“</strong>. Das Spielfeld zentriert und richtet sich sofort neu nach dir aus, ohne deinen Zug-Fortschritt zu verlieren!
             </div>
           </div>
         </div>
@@ -332,9 +352,10 @@
             <strong>Wie steuere ich die Spielfigur?</strong>
           </div>
           <div class="faq-card-body">
-            Durch <strong>echtes Vorwärtslaufen im Gelände</strong>! Gehe 2–3 Schritte in die gewünschte Himmelsrichtung. Sobald du mehr als 50% der Distanz in die Nachbarkachel überwunden hast, bewegt sich der Abenteurer und schiebt schwere Kisten. Bleibst du stehen, stoppt die Figur sofort.
+            <strong>1. Drehen:</strong> Drehe dich mit dem Handy in der Hand in die gewünschte Richtung – die Spielfigur (samt Laternen-Lichtkegel) dreht sich per Kompass live mit dir mit! <em>(Tipp: Du kannst auch eine Nachbarkachel antippen, um die Blickrichtung manuell auszurichten.)</em><br>
+            <strong>2. Laufen:</strong> Gehe 2–3 Schritte vorwärts in deine Blickrichtung. Durch die Kombination aus Schrittzähler und GPS (ab 50% der Kachelgröße, z. B. 2,0 m) läuft der Abenteurer sofort in seine Blickrichtung und schiebt schwere Kisten. Bleibst du stehen, stoppt die Figur sofort.
             <div class="faq-alert">
-              🚶 <em>Hinweis:</em> Auf dem Handy sind Pfeiltasten und Touch-Steuerung im normalen Modus gesperrt – es zählt nur echte Bewegung im Freien!
+              🚶 <em>Hinweis:</em> Auf dem Handy sind Pfeiltasten und Touch-D-Pad im normalen Modus gesperrt – es zählt nur echte Bewegung! (Tipp: 10x auf das Pyramidenbild auf der Startseite tippen schaltet den Reviewer-Modus mit Pfeiltasten &amp; Touch D-Pad frei!)
             </div>
           </div>
         </div>

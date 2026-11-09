@@ -201,7 +201,7 @@ export class SokobanEngine {
 
   // Macht den letzten Zug rückgängig
   undo() {
-    if (this.moveHistory.length === 0 || this.isCompleted) {
+    if (this.moveHistory.length === 0) {
       return { success: false, reason: 'no_history' };
     }
 
@@ -215,6 +215,7 @@ export class SokobanEngine {
     if (lastState.pushedBoxIndex !== -1) {
       this.pushCount = Math.max(0, this.pushCount - 1);
     }
+    this.isCompleted = this.checkWin();
 
     return {
       success: true,
@@ -289,13 +290,15 @@ export class SokobanEngine {
   // Persistenz via localStorage
   saveProgress() {
     try {
-      localStorage.setItem('sokoban_pyramid_save', JSON.stringify({
-        completedLevels: this.progress.completedLevels,
-        unlockedLevels: this.progress.unlockedLevels,
-        levelTokens: this.progress.levelTokens,
-        audioMuted: this.progress.audioMuted || false,
-        tileSize: this.progress.tileSize || 4.0
-      }));
+      if (typeof window !== 'undefined' && window.localStorage) {
+        localStorage.setItem('sokoban_pyramid_save', JSON.stringify({
+          completedLevels: this.progress.completedLevels,
+          unlockedLevels: this.progress.unlockedLevels,
+          levelTokens: this.progress.levelTokens,
+          audioMuted: this.progress.audioMuted || false,
+          tileSize: this.progress.tileSize || 4.0
+        }));
+      }
     } catch (e) {
       console.warn('localStorage konnte nicht gespeichert werden:', e);
     }
@@ -311,16 +314,18 @@ export class SokobanEngine {
     };
 
     try {
-      const data = localStorage.getItem('sokoban_pyramid_save');
-      if (data) {
-        const parsed = JSON.parse(data);
-        return {
-          completedLevels: Array.isArray(parsed.completedLevels) ? parsed.completedLevels : [],
-          unlockedLevels: Array.isArray(parsed.unlockedLevels) ? parsed.unlockedLevels : [0, 1, 2, 3, 4],
-          levelTokens: parsed.levelTokens || {},
-          audioMuted: !!parsed.audioMuted,
-          tileSize: parsed.tileSize || 4.0
-        };
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const data = localStorage.getItem('sokoban_pyramid_save');
+        if (data) {
+          const parsed = JSON.parse(data);
+          return {
+            completedLevels: Array.isArray(parsed.completedLevels) ? parsed.completedLevels : [],
+            unlockedLevels: Array.isArray(parsed.unlockedLevels) ? parsed.unlockedLevels : [0, 1, 2, 3, 4],
+            levelTokens: parsed.levelTokens || {},
+            audioMuted: !!parsed.audioMuted,
+            tileSize: parsed.tileSize || 4.0
+          };
+        }
       }
     } catch (e) {
       console.warn('localStorage konnte nicht geladen werden:', e);

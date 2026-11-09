@@ -17,6 +17,7 @@ export class SokobanRenderer {
     this.offsetX = 0;
     this.offsetY = 0;
     this.rotation = 0; // 0, 90, 180, 270 Grad
+    this.compassAngle = null; // Live Smartphone-Kompasswinkel (0..360°)
 
     // Grafische Assets (Echte AAA-Spielgrafiken)
     this.assets = {
@@ -149,15 +150,17 @@ export class SokobanRenderer {
   // Setzt den Drehwinkel des Spielfelds (0°, 90°, 180°, 270°)
   setRotation(degrees) {
     this.rotation = (degrees % 360 + 360) % 360;
+    this.handleResize();
   }
 
   // Passt Canvas an Container-Größe an
   handleResize() {
-    if (!this.canvas || !this.engine) return;
+    if (!this.canvas || !this.engine || !this.canvas.parentElement) return;
 
     const rect = this.canvas.parentElement.getBoundingClientRect();
     const width = Math.floor(rect.width);
     const height = Math.floor(rect.height || width);
+    if (width <= 0 || height <= 0) return;
 
     this.dpr = window.devicePixelRatio || 1;
     this.canvas.width = width * this.dpr;
@@ -179,7 +182,7 @@ export class SokobanRenderer {
 
     const maxTileW = (width - padding * 2) / effectiveGridW;
     const maxTileH = (height - padding * 2) / effectiveGridH;
-    this.tileSize = Math.floor(Math.min(maxTileW, maxTileH, 76));
+    this.tileSize = Math.max(16, Math.floor(Math.min(maxTileW, maxTileH, 76)));
 
     this.offsetX = Math.floor((width - gridW * this.tileSize) / 2);
     this.offsetY = Math.floor((height - gridH * this.tileSize) / 2);
@@ -344,14 +347,14 @@ export class SokobanRenderer {
       this.ctx.translate(shakeX, shakeY);
     }
 
-    // 3. SPIELFELD-DREHUNG (Visuell um die Spielfigur / den Spieler drehen!)
-    const playerCenterX = this.offsetX + (this.playerAnim.x + 0.5) * this.tileSize;
-    const playerCenterY = this.offsetY + (this.playerAnim.y + 0.5) * this.tileSize;
+    // 3. SPIELFELD-DREHUNG (Visuell um das Zentrum der Arena drehen)
+    const centerX = width / 2;
+    const centerY = height / 2;
 
     if (this.rotation !== 0) {
-      this.ctx.translate(playerCenterX, playerCenterY);
+      this.ctx.translate(centerX, centerY);
       this.ctx.rotate(this.rotation * Math.PI / 180);
-      this.ctx.translate(-playerCenterX, -playerCenterY);
+      this.ctx.translate(-centerX, -centerY);
     }
 
     // 4. Echte hochauflösende Bodenplatten mit Fugen & Tiefenlicht
@@ -860,6 +863,25 @@ export class SokobanRenderer {
     // Leuchtender Sicht- & Richtungsanzeiger vor der Figur
     this.renderFacingIndicator(screenFacing, s);
 
+    // Falls ein Live-Kompass aktiv ist: stufenloser goldener Kompass-Zeiger am Aura-Ring der Figur
+    if (this.compassAngle !== null && this.compassAngle !== undefined) {
+      this.ctx.save();
+      const liveRad = (this.compassAngle - 90) * (Math.PI / 180);
+      this.ctx.rotate(liveRad);
+      const ringR = s * 0.48;
+      this.ctx.strokeStyle = 'rgba(251, 191, 36, 0.35)';
+      this.ctx.lineWidth = 1.2;
+      this.ctx.beginPath();
+      this.ctx.arc(0, 0, ringR, -0.45, 0.45);
+      this.ctx.stroke();
+
+      this.ctx.fillStyle = '#38bdf8';
+      this.ctx.beginPath();
+      this.ctx.arc(ringR, 0, 3, 0, Math.PI * 2);
+      this.ctx.fill();
+      this.ctx.restore();
+    }
+
     this.ctx.restore();
   }
 
@@ -992,7 +1014,7 @@ export class SokobanRenderer {
 
     // Nord-Richtung unter Berücksichtigung der Spielfeld-Drehung
     // Bei rotation = 0 zeigt Norden nach oben (-90° in Standard-Canvas-Winkeln)
-    const northRad = (-this.rotation) * Math.PI / 180;
+    const northRad = (this.rotation) * Math.PI / 180;
     ctx.rotate(northRad);
 
     // Nord-Nadel (Leuchtend Rot)
@@ -1020,6 +1042,24 @@ export class SokobanRenderer {
     ctx.textBaseline = 'bottom';
     ctx.fillText('N', 0, -r + 4);
 
+    ctx.restore();
+
+    // Live-Blickrichtungs-Zeiger (Goldenes Dreieck am Kompassring)
+    const gridFacing = (this.engine && this.engine.player) ? this.engine.player.facing : 'down';
+    const facingToAngle = { up: 0, right: 90, down: 180, left: 270 };
+    const fallbackAngle = ((facingToAngle[gridFacing] || 0) + this.rotation) % 360;
+    const lookDeg = (this.compassAngle !== null && this.compassAngle !== undefined) ? this.compassAngle : fallbackAngle;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(lookDeg * Math.PI / 180);
+    ctx.fillStyle = '#fbbf24';
+    ctx.beginPath();
+    ctx.moveTo(0, -r - 3);
+    ctx.lineTo(4, -r + 3);
+    ctx.lineTo(-4, -r + 3);
+    ctx.closePath();
+    ctx.fill();
     ctx.restore();
   }
 

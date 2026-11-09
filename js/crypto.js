@@ -4,9 +4,7 @@
 
 import { LEVELS, COMBINED_TOKENS_HASH } from './levels.js';
 
-// Standard Test-Tresor (Wird mit dem Master-Key aller 15 Level entschlüsselt)
-// Standard-Koordinaten: "N 50° 16.782 E 011° 55.430"
-// Hinweis: "Das Geheimnis ruht am Fuß der alten Steinstele im Moosversteck."
+// Verschlüsselter Geocaching-Tresor (AES-GCM 256-Bit, Schlüssel wird erst im RAM aus allen 15 Level-Tokens abgeleitet)
 export const DEFAULT_CIPHER_DATA = {
   ivHex: "9853d256b228d223dfc5a9e0",
   ciphertextHex: "2f9ab662de435165f8960f0c478d088e7df7091ce991055faaf01e05f481a3648fc33607ea500f329b1f2e5aecc013e081f4a28422f41fde877f25d5febf836b6f2d1251d92830910d28059c035e2ed02f461f217971ac4685d69d1a0b6d674136b481d832e412b3bd17aefc06e06b8b48254110cf62b64367cfa25aa8f396dd0c8ebbb2045afd91b9f16b4a0346a579a16a5966952fcb6b266c7379eccf5ecc07612809c5fc"
